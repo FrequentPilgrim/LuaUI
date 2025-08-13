@@ -1,0 +1,156 @@
+function widget:GetInfo()
+    return {
+        name = "Unit Selector By Letter",
+        desc = "Selects closest unit in letter-defined group with Mouse 4 + letter. Shift/Ctrl modifies behavior.",
+        author = "FrequentPilgrim + ChatGPT",
+        date = "2025-06-13",
+        license = "GNU GPL v2",
+        layer = 0,
+        enabled = true
+    }
+end
+
+local BACK_BUTTON = 4
+
+local selecting = false
+local cursorX, cursorY = 0, 0
+local letterState = {}
+local selectedUnits = {}
+local lastCycleFrame = -1
+
+local keycodeToLetter = {}
+for i = 65, 90 do
+    local ch = string.char(i)
+    keycodeToLetter[Spring.GetKeyCode(ch:lower())] = ch
+end
+
+local glColor = gl.Color
+local glLineWidth = gl.LineWidth
+local glVertex = gl.Vertex
+local glBeginEnd = gl.BeginEnd
+local glDepthTest = gl.DepthTest
+local GL_LINES = GL.LINES
+
+local activeLines = {}
+
+function widget:MousePress(x, y, button)
+    if button == BACK_BUTTON then
+        local alt, ctrl, meta, shift = Spring.GetModKeyState()
+        selecting = true
+        cursorX, cursorY = x, y
+        letterState = {}
+        selectedUnits = {}
+        lastCycleFrame = Spring.GetGameFrame()
+        return true
+    elseif selecting then
+        selecting = false
+    end
+end
+
+function widget:MouseRelease(x, y, button)
+    if button == BACK_BUTTON then
+        selecting = false
+        return true
+    end
+end
+
+function widget:KeyPress(key, mods, isRepeat)
+    if not selecting then return false end
+
+    local letter = keycodeToLetter[key]
+    if not letter then return false end
+
+    local groupTable = WG.LetterUnitTypeMultiAutoGroups
+    if not groupTable then
+        Spring.Echo("[UnitSelectorByLetter] Letter group table not found")
+        return false
+    end
+
+    local defNameSet = groupTable[letter]
+    if not defNameSet then
+        Spring.Echo("[UnitSelectorByLetter] No group assigned to " .. letter)
+        return true
+    end
+
+    local mx, my = Spring.GetMouseState()
+    local type, coord = Spring.TraceScreenRay(mx, my, true)
+    if type ~= "ground" or not coord then return true end
+    local cx, cy, cz = coord[1], coord[2], coord[3]
+
+    local units = Spring.GetUnitsInSphere(cx, cy, cz, 9999, Spring.GetMyTeamID())
+    local filtered = {}
+    for _, id in ipairs(units) do
+        local defID = Spring.GetUnitDefID(id)
+        if defID and defNameSet[UnitDefs[defID].name] then
+            local ux, uy, uz = Spring.GetUnitPosition(id)
+            local dx, dz = ux - cx, uz - cz
+            local distSq = dx * dx + dz * dz
+            table.insert(filtered, {id = id, distSq = distSq})
+        end
+    end
+
+    table.sort(filtered, function(a, b) return a.distSq < b.distSq end)
+
+    local alt, ctrl, meta, shift = Spring.GetModKeyState()
+    local batchSize = ctrl and 5 or 1
+    local toSelect = {}
+    local addedCount = 0
+    for _, entry in ipairs(filtered) do
+        if not selectedUnits[entry.id] then
+            table.insert(toSelect, entry.id)
+            selectedUnits[entry.id] = true
+            addedCount = addedCount + 1
+            if addedCount >= batchSize then break end
+        end
+    end
+
+    if shift then
+        Spring.SelectUnitArray(toSelect, true)
+    else
+        if not letterState[letter] then
+            Spring.SelectUnitArray(toSelect, false)
+        else
+            Spring.SelectUnitArray(toSelect, true)
+        end
+    end
+
+    letterState[letter] = true
+
+    for _, id in ipairs(toSelect) do
+        local ux, uy, uz = Spring.GetUnitPosition(id)
+        table.insert(activeLines, {
+            x = cx, y = cy + 10, z = cz,
+            ux = ux, uy = uy + 15, uz = uz,
+            r = shift and 0.2 or 1,
+            g = shift and 1 or 1,
+            b = shift and 0.2 or 0,
+            a = 1,
+            frame = Spring.GetGameFrame()
+        })
+    end
+
+    return true
+end
+
+function widget:DrawWorld()
+    local gf = Spring.GetGameFrame()
+    local fadeTime = 60
+    local stillActive = {}
+
+    glLineWidth(4)
+    glBeginEnd(GL_LINES, function()
+        for _, line in ipairs(activeLines) do
+            local age = gf - line.frame
+            if age < fadeTime then
+                local alpha = line.a * (1 - age / fadeTime)
+                glColor(line.r, line.g, line.b, alpha)
+                glVertex(line.x, line.y, line.z)
+                glVertex(line.ux, line.uy, line.uz)
+                table.insert(stillActive, line)
+            end
+        end
+    end)
+
+    glColor(1, 1, 1, 1)
+    activeLines = stillActive
+end

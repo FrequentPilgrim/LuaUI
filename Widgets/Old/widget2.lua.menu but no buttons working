@@ -1,0 +1,59 @@
+local widgetName = "EpicMenu_Integration_Test"
+local widgetHandler = WG and WG.widgetHandler  -- fallback in some environments
+
+function widget:GetInfo()
+  return {
+    name    = widgetName,
+    desc    = "Verifies Epic Menu integration and toggle control.",
+    author  = "ChatGPT",
+    version = "1.3",
+    enabled = false,
+  }
+end
+
+options = {
+  {
+    key    = 'test_toggle',
+    name   = 'Enable Test Widget',
+    desc   = 'Toggle this test widget via Epic Menu.',
+    type   = 'bool',
+    value  = false,
+    scope  = 'widget',
+  },
+}
+
+local wasEnabled = false
+
+function widget:Initialize()
+  Spring.Echo("[EpicMenu_Integration_Test] Widget initialized")
+
+  if not widgetHandler then
+    Spring.Echo("[EpicMenu_Integration_Test] ERROR: widgetHandler is nil")
+    return
+  end
+
+  wasEnabled = options[1].value
+  if wasEnabled and not widgetHandler:IsWidgetEnabled(widgetName) then
+    widgetHandler:EnableWidget(widgetName)
+  end
+end
+
+function widget:Shutdown()
+  Spring.Echo("[EpicMenu_Integration_Test] Widget shutdown")
+end
+
+function widget:Update()
+  if not widgetHandler then return end
+
+  local nowEnabled = options[1].value
+  if nowEnabled ~= wasEnabled then
+    wasEnabled = nowEnabled
+    if nowEnabled then
+      Spring.Echo("[EpicMenu_Integration_Test] Enabling via Epic Menu")
+      widgetHandler:EnableWidget(widgetName)
+    else
+      Spring.Echo("[EpicMenu_Integration_Test] Disabling via Epic Menu")
+      widgetHandler:DisableWidget(widgetName)
+    end
+  end
+end

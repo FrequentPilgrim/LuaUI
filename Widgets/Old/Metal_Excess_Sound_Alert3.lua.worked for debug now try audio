@@ -1,0 +1,39 @@
+function widget:GetInfo()
+  return {
+    name      = "Metal Excess Debug",
+    desc      = "Prints detailed metal resource info and warns when metal is being excessed (current > visible storage)",
+    author    = "ChatGPT",
+    version   = "1.2",
+    enabled   = true,
+  }
+end
+
+local spGetTeamResources = Spring.GetTeamResources
+local spGetMyTeamID = Spring.GetMyTeamID
+local spEcho = Spring.Echo
+
+local lastState = false
+
+function widget:GameFrame(frame)
+  if frame % 30 ~= 0 then return end  -- every 1 second
+
+  local teamID = spGetMyTeamID()
+  local current, rawStorage, pull, income, expense, share = spGetTeamResources(teamID, "metal")
+  local storage = math.max(0, rawStorage - 10000)  -- adjust for engine offset
+
+  if current and storage and pull and income and expense then
+    local level = current / math.max(storage, 0.01)
+
+    spEcho(string.format(
+      "[MetalExcessDebug] Metal: Current=%.1f VisibleStorage=%.1f Level=%.3f Pull=%.1f Income=%.1f Expense=%.1f",
+      current, storage, level, pull, income, expense))
+
+    local excessing = current > storage
+    if excessing and not lastState then
+      spEcho("[MetalExcessDebug] >>> EXCESSING METAL <<<")
+    end
+    lastState = excessing
+  else
+    spEcho("[MetalExcessDebug] Warning: Failed to retrieve team metal resource stats.")
+  end
+end

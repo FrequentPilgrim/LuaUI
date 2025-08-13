@@ -1,0 +1,91 @@
+function widget:GetInfo()
+  return {
+    name      = "Commander Damage Alert",
+    desc      = "Plays a sound when your commander takes damage (supports all commander types)",
+    author    = "ChatGPT + User",
+    date      = "2025-06-09",
+    license   = "MIT",
+    layer     = 0,
+    enabled   = true,
+  }
+end
+
+-- Spring functions
+local GetMyTeamID         = Spring.GetMyTeamID
+local GetUnitTeam         = Spring.GetUnitTeam
+local GetUnitRulesParam   = Spring.GetUnitRulesParam
+local GetGameFrame        = Spring.GetGameFrame
+local PlaySoundFile       = Spring.PlaySoundFile
+local Echo                = Spring.Echo
+
+local UnitDefs            = UnitDefs
+local SOUND_FILE          = "LuaUI/sounds/commanderistakingfire.ogg"
+local COOLDOWN_FRAMES     = 660  -- 22 seconds * 30 frames per second
+local lastPlayFrame       = 0
+
+-- Known commander unitDef name patterns
+local commanderPrefixes = {
+  "dynrecon", "dynstrike", "dynassault", "dynsupport", "dynknight",
+  "dyntrainer", "zk_commander", "zk_custom", "zk_chassis", "comm"
+}
+
+-- Commander detection logic
+local function IsCommander(unitID, unitDefID)
+  local unitDef = UnitDefs[unitDefID]
+  if not unitDef then
+    Echo("[Commander Alert] No unitDef for unitID", unitID)
+    return false
+  end
+
+  local name = unitDef.name or "unknown"
+  local isCmd = GetUnitRulesParam(unitID, "iscommander")
+  local commtype = GetUnitRulesParam(unitID, "commtype")
+  local level = GetUnitRulesParam(unitID, "level")
+
+  if isCmd == 1 then
+    Echo("[Commander Alert] Detected via iscommander = 1 for unit", unitID, "(" .. name .. ")")
+    return true
+  end
+
+  if commtype or (level and level > 0) then
+    Echo("[Commander Alert] Detected via commtype or level for unit", unitID, "(" .. name .. ")")
+    return true
+  end
+
+  for _, prefix in ipairs(commanderPrefixes) do
+    if name:sub(1, #prefix) == prefix then
+      Echo("[Commander Alert] Detected by name prefix '" .. prefix .. "' for unit", unitID, "(" .. name .. ")")
+      return true
+    end
+  end
+
+  if name:find("_base") then
+    Echo("[Commander Alert] Detected by '_base' suffix for unit", unitID, "(" .. name .. ")")
+    return true
+  end
+
+  Echo("[Commander Alert] Unit", unitID, "(" .. name .. ") is not a commander. Ignoring.")
+  return false
+end
+
+function widget:UnitDamaged(unitID, unitDefID, unitTeam)
+  local myTeamID = GetMyTeamID()
+  if unitTeam ~= myTeamID then return end
+  if not IsCommander(unitID, unitDefID) then return end
+
+  local currentFrame = GetGameFrame()
+  if currentFrame - lastPlayFrame < COOLDOWN_FRAMES then
+    Echo("[Commander Alert] Commander hit but cooldown is active.")
+    return
+  end
+
+  Echo("[Commander Alert] Your commander took damage! Playing sound.")
+  PlaySoundFile(SOUND_FILE, 1.0)
+  lastPlayFrame = currentFrame
+end
+
+function widget:Initialize()
+  if not VFS.FileExists(SOUND_FILE) then
+    Echo("[Commander Alert] Missing sound file:", SOUND_FILE)
+  end
+end

@@ -1,0 +1,178 @@
+function widget:GetInfo()
+    return {
+        name    = "Unit Selector By Letter",
+        desc    = "Selects nearest unit(s) in a letter group using Mouse Back + Key combos",
+        author  = "ChatGPT + FrequentPilgrim",
+        date    = "2025-06-13",
+        license = "GNU GPL v2",
+        layer   = 0,
+        enabled = true,
+    }
+end
+
+local MOUSE_BACK_BUTTON = 4
+local mouseBackHeld = false
+local selectedUnitsThisCycle = {}
+local lastSelectedUnitPositions = {}
+local drawTimer = 0
+local shiftHeld = false
+local ctrlHeld = false
+local hasClearedSelectionThisCycle = false
+
+local CMD_MOVE = CMD.MOVE
+
+-- Use local fallback if global Spring.GetUnitIsIdle is missing
+local function IsUnitIdle(unitID)
+    if not Spring.ValidUnitID(unitID) then return false end
+    local _, _, _, _, buildProgress = Spring.GetUnitHealth(unitID)
+    local cmdQueue = Spring.GetCommandQueue(unitID, 1)
+    return (buildProgress or 1) >= 1 and (not cmdQueue or #cmdQueue == 0)
+end
+
+local keycodeToLetter = {}
+for i = 65, 90 do
+    local ch = string.char(i)
+    keycodeToLetter[Spring.GetKeyCode(ch:lower())] = ch
+end
+
+function widget:MousePress(_, _, button)
+    if button == MOUSE_BACK_BUTTON then
+        mouseBackHeld = true
+        selectedUnitsThisCycle = {}
+        hasClearedSelectionThisCycle = false
+    end
+    return false
+end
+
+function widget:MouseRelease(_, _, button)
+    if button == MOUSE_BACK_BUTTON then
+        mouseBackHeld = false
+        selectedUnitsThisCycle = {}
+        hasClearedSelectionThisCycle = false
+    end
+    return false
+end
+
+function widget:KeyPress(key, mods, _)
+    if not mouseBackHeld then return false end
+
+    local letter = keycodeToLetter[key]
+    if not letter then return false end
+
+    local groupTable = WG.LetterUnitTypeMultiAutoGroups
+    if not groupTable then
+        Spring.Echo("[Selector] WG.LetterUnitTypeMultiAutoGroups is missing.")
+        return false
+    end
+
+    local defNames = groupTable[letter]
+    if not defNames then
+        Spring.Echo("[Selector] No units assigned to letter group:", letter)
+        return true
+    end
+
+    shiftHeld = mods.shift
+    ctrlHeld = mods.ctrl
+
+    local mx, my = Spring.GetMouseState()
+    local type, pos = Spring.TraceScreenRay(mx, my, true)
+    if type ~= "ground" or not pos then
+        Spring.Echo("[Selector] Mouse not over ground.")
+        return true
+    end
+
+    local cx, cy, cz = pos[1], pos[2], pos[3]
+    local allUnits = Spring.GetAllUnits()
+    local myTeam = Spring.GetMyTeamID()
+    local candidates = {}
+
+    for _, unitID in ipairs(allUnits) do
+        if Spring.GetUnitTeam(unitID) == myTeam then
+            local udid = Spring.GetUnitDefID(unitID)
+            if udid then
+                local defName = UnitDefs[udid].name
+                if defNames[defName] and not selectedUnitsThisCycle[unitID] then
+                    if not shiftHeld or not Spring.IsUnitSelected(unitID) then
+                        local ux, uy, uz = Spring.GetUnitPosition(unitID)
+                        local distSq = (ux - cx)^2 + (uz - cz)^2
+                        table.insert(candidates, {
+                            id = unitID,
+                            dist = distSq,
+                            pos = { ux, uy, uz },
+                            idle = IsUnitIdle(unitID)
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+
+    local newlySelected = {}
+    local newlySelectedPositions = {}
+
+    if ctrlHeld then
+        for _, candidate in ipairs(candidates) do
+            if candidate.idle then
+                Spring.SelectUnitArray({ candidate.id }, false)
+                Spring.GiveOrderToUnit(candidate.id, CMD_MOVE, { cx, cy, cz }, {})
+                table.insert(newlySelectedPositions, candidate.pos)
+                selectedUnitsThisCycle[candidate.id] = true
+                break
+            end
+        end
+    else
+        for i = 1, math.min(1, #candidates) do
+            local candidate = candidates[i]
+            table.insert(newlySelected, candidate.id)
+            table.insert(newlySelectedPositions, candidate.pos)
+            selectedUnitsThisCycle[candidate.id] = true
+        end
+
+        if #newlySelected > 0 then
+            if shiftHeld then
+                Spring.SelectUnitArray(newlySelected, true)
+            else
+                if not hasClearedSelectionThisCycle then
+                    Spring.SelectUnitArray(newlySelected, false)
+                    hasClearedSelectionThisCycle = true
+                else
+                    Spring.SelectUnitArray(newlySelected, true)
+                end
+            end
+        end
+    end
+
+    if #newlySelectedPositions > 0 then
+        lastSelectedUnitPositions = newlySelectedPositions
+        drawTimer = 20
+    end
+
+    return true
+end
+
+function widget:DrawWorld()
+    if drawTimer > 0 and #lastSelectedUnitPositions > 0 then
+        local mx, my = Spring.GetMouseState()
+        local type, pos = Spring.TraceScreenRay(mx, my, true)
+        if type == "ground" and pos then
+            local cx, cy, cz = pos[1], pos[2], pos[3]
+            local r, g, b = 0.6, 0.8, 1
+            if shiftHeld then r, g, b = 0, 1, 0 end
+            if ctrlHeld then r, g, b = 1, 0.6, 0.1 end
+
+            gl.Color(r, g, b, drawTimer / 20)
+            gl.LineWidth(3)
+            gl.BeginEnd(GL.LINES, function()
+                for _, unitPos in ipairs(lastSelectedUnitPositions) do
+                    gl.Vertex(cx, cy + 10, cz)
+                    gl.Vertex(unitPos[1], unitPos[2] + 10, unitPos[3])
+                end
+            end)
+            gl.LineWidth(1)
+            gl.Color(1, 1, 1, 1)
+        end
+        drawTimer = drawTimer - 1
+    end
+end

@@ -1,0 +1,165 @@
+function widget:GetInfo()
+	return {
+		name    = "Letter Group Icons (Filtered Letters + F6/F7 Toggle)",
+		desc    = "Displays letter icons for unit groups A–Z. Toggle individual letters with F6+letter, or disable entirely with F7.",
+		author  = "ChatGPT",
+		date    = "2025-06-08",
+		license = "GPL-v2",
+		layer   = 0,
+		enabled = true,
+	}
+end
+
+-- OpenGL functions
+local glText         = gl.Text
+local glColor        = gl.Color
+local glPushMatrix   = gl.PushMatrix
+local glPopMatrix    = gl.PopMatrix
+local glTranslate    = gl.Translate
+local glBillboard    = gl.Billboard
+local glDepthTest    = gl.DepthTest
+local glDrawFuncAtUnit = gl.DrawFuncAtUnit
+
+-- Spring functions
+local spGetMyTeamID     = Spring.GetMyTeamID
+local spGetUnitTeam     = Spring.GetUnitTeam
+local spGetUnitDefID    = Spring.GetUnitDefID
+local spGetAllUnits     = Spring.GetAllUnits
+local spIsUnitInView    = Spring.IsUnitInView
+local Echo              = Spring.Echo
+local VFS               = VFS
+
+-- Settings
+local fontSize = 25
+local fontColor = {1, 1, 0, 1} -- yellow
+local holdF6 = false
+local widgetEnabled = true
+
+-- Data structures
+local unitLetterMap = {} -- [unitDefName] = { "A", "B", ... }
+local letterGroups = {}
+
+-- Allowed A–Z letters
+local allowedLetters = {}
+for i = string.byte("A"), string.byte("Z") do
+	allowedLetters[string.char(i)] = true
+end
+
+-- Visibility state
+local activeLetters = {} -- [letter] = true/false
+
+function widget:Initialize()
+	Echo("[Letter Group Icons] Initialize called")
+
+	local data = VFS.Include("LuaUI/Config/ZK_Data.lua")
+	if not data or not data["Letter UnitType Multi Auto Groups"] then
+		Echo("[Letter Group Icons] Failed to load ZK_Data.lua")
+		widgetHandler:RemoveWidget()
+		return
+	end
+
+	letterGroups = data["Letter UnitType Multi Auto Groups"]
+
+	for letter, unitTypes in pairs(letterGroups) do
+		if allowedLetters[letter] then
+			for _, unitType in ipairs(unitTypes) do
+				unitLetterMap[unitType] = unitLetterMap[unitType] or {}
+				table.insert(unitLetterMap[unitType], letter)
+			end
+		end
+	end
+
+	-- Load visibility settings
+	local savedData = Spring.GetConfigString("LetterGroupIcons_Visibility", "")
+	if savedData and #savedData > 0 then
+		for letter in savedData:gmatch(".") do
+			letter = string.upper(letter)
+			if allowedLetters[letter] then
+				activeLetters[letter] = true
+			end
+		end
+	else
+		-- Default to all on
+		for letter in pairs(allowedLetters) do
+			activeLetters[letter] = true
+		end
+	end
+
+	Echo("[Letter Group Icons] Press F6 + A–Z to toggle individual letter visibility")
+	Echo("[Letter Group Icons] Press F7 to toggle all icons on/off")
+end
+
+function widget:Shutdown()
+	local saveStr = ""
+	for letter in pairs(allowedLetters) do
+		if activeLetters[letter] then
+			saveStr = saveStr .. letter
+		end
+	end
+	Spring.SetConfigString("LetterGroupIcons_Visibility", saveStr)
+end
+
+function widget:KeyPress(key, mods, isRepeat)
+	if key == 287 and not isRepeat then -- F6
+		holdF6 = true
+		return true
+	end
+
+	if key == 288 and not isRepeat then -- F7
+		widgetEnabled = not widgetEnabled
+		Echo("[Letter Group Icons] " .. (widgetEnabled and "Enabled" or "Disabled"))
+		return true
+	end
+
+	if holdF6 and not isRepeat then
+		local char = Spring.GetKeySymbol(key)
+		char = string.upper(char or "")
+		if allowedLetters[char] then
+			activeLetters[char] = not activeLetters[char]
+			Echo("[Letter Group Icons] Toggled letter '" .. char .. "' visibility: " .. tostring(activeLetters[char]))
+			return true
+		end
+	end
+end
+
+function widget:KeyRelease(key)
+	if key == 287 then -- F6
+		holdF6 = false
+	end
+end
+
+function widget:DrawWorld()
+	if not widgetEnabled then return end
+
+	local myTeamID = spGetMyTeamID()
+	glDepthTest(true)
+
+	for _, unitID in ipairs(spGetAllUnits()) do
+		if spIsUnitInView(unitID) and spGetUnitTeam(unitID) == myTeamID then
+			local unitDefID = spGetUnitDefID(unitID)
+			if unitDefID then
+				local unitDef = UnitDefs[unitDefID]
+				local letters = unitLetterMap[unitDef.name]
+				if letters then
+					for _, letter in ipairs(letters) do
+						if activeLetters[letter] then
+							glDrawFuncAtUnit(unitID, false, function()
+								glPushMatrix()
+								glTranslate(12, 18, -10)
+								glBillboard()
+								glColor(fontColor)
+								glText(letter, 0, 0, fontSize, "oc")
+								glColor(1, 1, 1, 1) -- Restore color to white
+								glPopMatrix()
+							end)
+							break -- Show only one visible letter
+						end
+					end
+				end
+			end
+		end
+	end
+
+	glDepthTest(false)
+	glColor(1, 1, 1, 1) -- Extra safeguard: reset color globally
+end

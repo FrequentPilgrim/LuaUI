@@ -1,0 +1,53 @@
+function widget:GetInfo()
+  return {
+    name      = "Commander Custom Damage Alert",
+    desc      = "Plays a custom sound when your commander is damaged",
+    author    = "ChatGPT",
+    date      = "2025-06-08",
+    license   = "MIT",
+    layer     = 0,
+    enabled   = true
+  }
+end
+
+local GetUnitDefID = Spring.GetUnitDefID
+local GetUnitTeam = Spring.GetUnitTeam
+local GetMyTeamID = Spring.GetMyTeamID
+local GetGameFrame = Spring.GetGameFrame
+local PlaySoundFile = Spring.PlaySoundFile
+local Echo = Spring.Echo
+local VFSFileExists = VFS.FileExists
+
+local lastPlayFrame = 0
+local cooldownFrames = 180
+local CUSTOM_SOUND_FILE = "LuaUI/sounds/commanderistakingfire.ogg"
+
+function widget:Initialize()
+  if not VFSFileExists(CUSTOM_SOUND_FILE) then
+    Echo("[CommanderAlert] ERROR: Sound file not found: " .. CUSTOM_SOUND_FILE)
+  else
+    Echo("[CommanderAlert] Widget loaded. Sound file found.")
+  end
+end
+
+function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer)
+  if not unitDefID then return end
+
+  local def = UnitDefs[unitDefID]
+  if not def then return end
+
+  -- Log all damaged unit names for debug
+  Echo("[CommanderAlert] Unit damaged: " .. def.name .. " (team " .. unitTeam .. ")")
+
+  -- Check for common commander naming pattern
+  if def.name:find("commander", 1, true) or (def.customParams and def.customParams.iscommander) then
+    if unitTeam == GetMyTeamID() then
+      local frame = GetGameFrame()
+      if frame - lastPlayFrame >= cooldownFrames then
+        lastPlayFrame = frame
+        Echo("[CommanderAlert] Your commander took damage! Playing sound...")
+        PlaySoundFile(CUSTOM_SOUND_FILE, 1.0)
+      end
+    end
+  end
+end

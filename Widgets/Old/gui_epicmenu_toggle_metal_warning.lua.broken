@@ -1,0 +1,33 @@
+function widget:GetInfo()
+	return {
+		name = "EpicMenu Toggle: Metal Excess Warning",
+		desc = "Adds Epic Menu toggle for Metal Excess Warning widget",
+		author = "ChatGPT",
+		version = "1.2",
+		enabled = true,
+	}
+end
+
+local controlledWidget = "Metal Excess Warning"
+
+options_path = "Settings/Audio/Voiced Alerts"
+
+options = {
+	{
+		key = "metalExcessEnabled",
+		name = "Enable Metal Excess Warning",
+		desc = "Plays a sound when metal is overflowing. Same as F11 toggle.",
+		type = "bool",
+		value = function()
+			return widgetHandler.knownWidgets[controlledWidget] and widgetHandler:IsWidgetEnabled(controlledWidget)
+		end,
+		OnChange = function(v)
+			Spring.Echo("[EpicMenu] Setting '" .. controlledWidget .. "' to " .. tostring(v))
+			if v then
+				widgetHandler:EnableWidget(controlledWidget)
+			else
+				widgetHandler:DisableWidget(controlledWidget)
+			end
+		end,
+	},
+}

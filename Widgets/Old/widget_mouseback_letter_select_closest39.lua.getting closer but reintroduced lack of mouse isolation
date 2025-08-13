@@ -1,0 +1,201 @@
+function widget:GetInfo()
+    return {
+        name = "Unit Selector By Letter",
+        desc = "Selects nearest unit(s) in a letter group with Mouse Back + Letter; Ctrl modifier moves a single idle unit (clears selection each time)",
+        author = "ChatGPT + FrequentPilgrim",
+        date = "2025-06-12",
+        license = "GNU GPL v2",
+        layer = 0,
+        enabled = true,
+    }
+end
+
+local MOUSE_BACK_BUTTON = 4
+local mouseBackHeld = false
+local selectedUnitsThisCycle = {}
+local lastSelectedUnitPositions = {}
+local drawTimer = 0
+local shiftHeld = false
+local ctrlHeld = false
+local hasClearedSelectionThisCycle = false
+
+local keycodeToLetter = {}
+for i = 65, 90 do
+    keycodeToLetter[Spring.GetKeyCode(string.char(i):lower())] = string.char(i)
+end
+
+function widget:MousePress(_, _, button)
+    if button == MOUSE_BACK_BUTTON then
+        mouseBackHeld = true
+        selectedUnitsThisCycle = {}
+        hasClearedSelectionThisCycle = false
+        return true
+    end
+end
+
+function widget:MouseRelease(_, _, button)
+    if button == MOUSE_BACK_BUTTON then
+        mouseBackHeld = false
+        selectedUnitsThisCycle = {}
+        hasClearedSelectionThisCycle = false
+        return true
+    end
+end
+
+function widget:KeyPress(key, mods, _)
+    if not mouseBackHeld then return false end
+
+    local letter = keycodeToLetter[key]
+    if not letter then return false end
+
+    local groupTable = WG.LetterUnitTypeMultiAutoGroups
+    if not groupTable then
+        Spring.Echo("[Selector] Missing WG.LetterUnitTypeMultiAutoGroups.")
+        return false
+    end
+
+    local defNames = groupTable[letter]
+    if not defNames then
+        Spring.Echo("[Selector] No unit group for letter:", letter)
+        return true
+    end
+
+    shiftHeld = mods.shift
+    ctrlHeld = mods.ctrl
+
+    local mx, my = Spring.GetMouseState()
+    local type, pos = Spring.TraceScreenRay(mx, my, true)
+    if type ~= "ground" or not pos then return true end
+    local cx, cy, cz = pos[1], pos[2], pos[3]
+
+    local myTeam = Spring.GetMyTeamID()
+    local candidates = {}
+
+    if ctrlHeld then
+        -- Always clear selection on Ctrl + MouseBack + Letter press
+        Spring.SelectUnitArray({}, false)
+
+        for _, unitID in ipairs(Spring.GetAllUnits()) do
+            if Spring.GetUnitTeam(unitID) == myTeam then
+                local defID = Spring.GetUnitDefID(unitID)
+                if defID then
+                    local defName = UnitDefs[defID].name
+                    if defNames[defName] then
+                        if not selectedUnitsThisCycle[unitID] and (not shiftHeld or not Spring.IsUnitSelected(unitID)) then
+                            local cmds = Spring.GetCommandQueue(unitID, 1)
+                            local isIdle = (#cmds == 0)
+                            if isIdle then
+                                table.insert(candidates, { id = unitID })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if #candidates > 0 then
+            local unitID = candidates[1].id
+
+            if shiftHeld then
+                Spring.SelectUnitArray({ unitID }, true)
+            else
+                Spring.SelectUnitArray({ unitID }, false)
+            end
+
+            Spring.GiveOrderToUnit(unitID, CMD.MOVE, { cx, cy, cz }, {})
+
+            lastSelectedUnitPositions = {}
+            local ux, uy, uz = Spring.GetUnitPosition(unitID)
+            if ux and uy and uz then
+                lastSelectedUnitPositions = { { ux, uy, uz } }
+                drawTimer = 20
+            else
+                drawTimer = 0
+            end
+        else
+            lastSelectedUnitPositions = {}
+            drawTimer = 0
+        end
+
+        return true
+    end
+
+    -- Original handling for shift/no modifier (add/select multiple)
+    for _, unitID in ipairs(Spring.GetAllUnits()) do
+        if Spring.GetUnitTeam(unitID) == myTeam then
+            local defID = Spring.GetUnitDefID(unitID)
+            if defID then
+                local defName = UnitDefs[defID].name
+                if defNames[defName] then
+                    if not selectedUnitsThisCycle[unitID] and (not shiftHeld or not Spring.IsUnitSelected(unitID)) then
+                        local ux, uy, uz = Spring.GetUnitPosition(unitID)
+                        local distSq = (ux - cx)^2 + (uz - cz)^2
+                        table.insert(candidates, { id = unitID, dist = distSq, pos = { ux, uy, uz } })
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+
+    local unitsToSelect = {}
+    local newlySelectedPositions = {}
+    local numToSelect = 1
+
+    for i = 1, math.min(numToSelect, #candidates) do
+        local c = candidates[i]
+        table.insert(unitsToSelect, c.id)
+        table.insert(newlySelectedPositions, c.pos)
+        selectedUnitsThisCycle[c.id] = true
+    end
+
+    if #unitsToSelect > 0 then
+        if shiftHeld then
+            Spring.SelectUnitArray(unitsToSelect, true)
+        else
+            if not hasClearedSelectionThisCycle then
+                Spring.SelectUnitArray(unitsToSelect, false)
+                hasClearedSelectionThisCycle = true
+            else
+                Spring.SelectUnitArray(unitsToSelect, true)
+            end
+        end
+        lastSelectedUnitPositions = newlySelectedPositions
+        drawTimer = 20
+    else
+        lastSelectedUnitPositions = {}
+        drawTimer = 0
+    end
+
+    return true
+end
+
+function widget:DrawWorld()
+    if drawTimer > 0 and #lastSelectedUnitPositions > 0 then
+        local mx, my = Spring.GetMouseState()
+        local type, pos = Spring.TraceScreenRay(mx, my, true)
+        if type == "ground" and pos then
+            local cx, cy, cz = pos[1], pos[2], pos[3]
+            local r, g, b
+            if ctrlHeld then
+                r, g, b = 1, 0, 0 -- Red if ctrl held
+            elseif shiftHeld then
+                r, g, b = 0, 1, 0 -- Green if shift held
+            else
+                r, g, b = 0.6, 0.8, 1 -- Light blue if no modifier
+            end
+            gl.Color(r, g, b, drawTimer / 20)
+            gl.LineWidth(3)
+            gl.BeginEnd(GL.LINES, function()
+                for _, unitPos in ipairs(lastSelectedUnitPositions) do
+                    gl.Vertex(cx, cy + 10, cz)
+                    gl.Vertex(unitPos[1], unitPos[2] + 10, unitPos[3])
+                end
+            end)
+            gl.LineWidth(1)
+            gl.Color(1, 1, 1, 1)
+        end
+        drawTimer = drawTimer - 1
+    end
+end

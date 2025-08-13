@@ -1,0 +1,52 @@
+function widget:GetInfo()
+	return {
+		name = "Metal Excess Warning",
+		desc = "Plays a sound when metal is excessing (after first 30s, on 45s cooldown)",
+		author = "ChatGPT + You",
+		version = "1.4",
+		date = "2025-06-09",
+		license = "GPL v2",
+		layer = 0,
+		enabled = true,
+	}
+end
+
+local GetTeamResources = Spring.GetTeamResources
+local PlaySoundFile = Spring.PlaySoundFile
+local GetGameFrame = Spring.GetGameFrame
+local GetMyTeamID = Spring.GetMyTeamID
+local Echo = Spring.Echo
+
+local myTeamID
+local lastSoundFrame = -999999
+local cooldownFrames = 45 * 30     -- 45 seconds = 1350 frames
+local gracePeriodFrames = 30 * 30  -- 30 seconds = 900 frames
+
+function widget:Initialize()
+	myTeamID = GetMyTeamID()
+end
+
+function widget:GameFrame(f)
+	if not myTeamID then return end
+	if f % 30 ~= 0 then return end -- Check once per second
+
+	if f < gracePeriodFrames then return end -- Skip first 30 seconds
+
+	local current, storage, pull, income, expense, share = GetTeamResources(myTeamID, "metal")
+
+	-- Adjust for engine's extra 10000 "phantom" storage
+	local adjustedStorage = (storage or 0) - 10000
+
+	Echo(string.format("Metal: Current=%.1f Storage=%.1f Level=%.3f Pull=%.1f Income=%.1f Expense=%.1f",
+		current or 0, adjustedStorage, (adjustedStorage > 0 and current / adjustedStorage or 0),
+		pull or 0, income or 0, expense or 0))
+
+	if current and adjustedStorage and current > adjustedStorage then
+		Echo("Excessing Metal!")
+
+		if (f - lastSoundFrame) >= cooldownFrames then
+			PlaySoundFile("LuaUI/Sounds/metalcapacityreached.ogg", 1, "ui")
+			lastSoundFrame = f
+		end
+	end
+end

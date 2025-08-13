@@ -1,0 +1,184 @@
+function widget:GetInfo()
+	return {
+		name    = "Letter Group Icons (Filtered Letters + F6/F7 Toggle)",
+		desc    = "Displays letter icons for unit groups A–Z. Toggle individual letters with F6+letter, toggle all icons with F7, toggle multi-letter display with Ctrl+F7.",
+		author  = "ChatGPT",
+		date    = "2025-06-10",
+		license = "GPL-v2",
+		layer   = 0,
+		enabled = true,
+	}
+end
+
+local glText = gl.Text
+local glColor = gl.Color
+
+local spGetMyTeamID = Spring.GetMyTeamID
+local spGetUnitTeam = Spring.GetUnitTeam
+local spGetUnitDefID = Spring.GetUnitDefID
+local spGetAllUnits = Spring.GetAllUnits
+local spGetUnitPosition = Spring.GetUnitPosition
+local spWorldToScreenCoords = Spring.WorldToScreenCoords
+local Echo = Spring.Echo
+local VFS = VFS
+
+local fontSize = 12
+local fontColor = {1, 1, 0, 1} -- yellow
+local holdF6 = false
+local widgetEnabled = true
+local showAllLetters = false
+
+local unitLetterMap = {} -- [unitDefName] = { "A", "B", ... }
+local letterGroups = {}
+
+-- All letters A-Z allowed
+local allowedLetters = {}
+for i = string.byte("A"), string.byte("Z") do
+	allowedLetters[string.char(i)] = true
+end
+
+-- Persistent visibility
+local activeLetters = {} -- [letter] = true/false
+
+-- Custom display order
+local sortOrder = {}
+do
+	local customOrder = "qwertyasdfghzxcbijklmnopuv"
+	for i = 1, #customOrder do
+		sortOrder[string.sub(customOrder, i, i)] = i
+	end
+end
+
+local function getSortedLetters(letters)
+	local sorted = {}
+	for _, letter in ipairs(letters) do
+		table.insert(sorted, letter)
+	end
+	table.sort(sorted, function(a, b)
+		local oa = sortOrder[string.lower(a)] or (100 + string.byte(a))
+		local ob = sortOrder[string.lower(b)] or (100 + string.byte(b))
+		return oa < ob
+	end)
+	return sorted
+end
+
+function widget:Initialize()
+	Echo("[Letter Group Icons] Initialize called")
+	local data = VFS.Include("LuaUI/Config/ZK_Data.lua")
+	if not data or not data["Letter UnitType Multi Auto Groups"] then
+		Echo("[Letter Group Icons] Failed to load ZK_Data.lua")
+		widgetHandler:RemoveWidget()
+		return
+	end
+
+	letterGroups = data["Letter UnitType Multi Auto Groups"]
+
+	for letter, unitTypes in pairs(letterGroups) do
+		if allowedLetters[letter] then
+			for _, unitType in ipairs(unitTypes) do
+				unitLetterMap[unitType] = unitLetterMap[unitType] or {}
+				table.insert(unitLetterMap[unitType], letter)
+			end
+		end
+	end
+
+	local savedData = Spring.GetConfigString("LetterGroupIcons_Visibility", "")
+	if savedData and #savedData > 0 then
+		for letter in savedData:gmatch(".") do
+			letter = string.upper(letter)
+			if allowedLetters[letter] then
+				activeLetters[letter] = true
+			end
+		end
+	else
+		for letter in pairs(allowedLetters) do
+			activeLetters[letter] = true
+		end
+	end
+
+	Echo("[Letter Group Icons] Press F6 + A–Z to toggle individual letter visibility")
+	Echo("[Letter Group Icons] Press F7 to toggle all icons on/off")
+	Echo("[Letter Group Icons] Press Ctrl + F7 to toggle ALL letter display mode")
+end
+
+function widget:Shutdown()
+	local saveStr = ""
+	for letter in pairs(allowedLetters) do
+		if activeLetters[letter] then
+			saveStr = saveStr .. letter
+		end
+	end
+	Spring.SetConfigString("LetterGroupIcons_Visibility", saveStr)
+end
+
+function widget:KeyPress(key, mods, isRepeat)
+	if key == 287 and not isRepeat then -- F6
+		holdF6 = true
+		return true
+	end
+
+	if key == 288 and not isRepeat then -- F7
+		if mods.ctrl then
+			showAllLetters = not showAllLetters
+			Echo("[Letter Group Icons] Show All Letters: " .. tostring(showAllLetters))
+		else
+			widgetEnabled = not widgetEnabled
+			Echo("[Letter Group Icons] " .. (widgetEnabled and "Enabled" or "Disabled"))
+		end
+		return true
+	end
+
+	if holdF6 and not isRepeat then
+		local char = Spring.GetKeySymbol(key)
+		char = string.upper(char or "")
+		if allowedLetters[char] then
+			activeLetters[char] = not activeLetters[char]
+			Echo("[Letter Group Icons] Toggled letter '" .. char .. "' visibility: " .. tostring(activeLetters[char]))
+			return true
+		end
+	end
+end
+
+function widget:KeyRelease(key)
+	if key == 287 then -- F6
+		holdF6 = false
+	end
+end
+
+function widget:DrawScreen()
+	if not widgetEnabled then return end
+
+	local myTeamID = spGetMyTeamID()
+
+	for _, unitID in ipairs(spGetAllUnits()) do
+		if spGetUnitTeam(unitID) == myTeamID then
+			local unitDefID = spGetUnitDefID(unitID)
+			if unitDefID then
+				local unitDef = UnitDefs[unitDefID]
+				local letters = unitLetterMap[unitDef.name]
+				if letters then
+					local x, y, z = spGetUnitPosition(unitID)
+					if x and y and z then
+						local sx, sy = spWorldToScreenCoords(x, y + 18, z)
+						if sx and sy then
+							local sorted = getSortedLetters(letters)
+							local drawnCount = 0
+							for _, letter in ipairs(sorted) do
+								if activeLetters[letter] then
+									local offsetX = drawnCount * fontSize * 0.9
+									glColor(fontColor)
+									glText(letter, sx + offsetX, sy, fontSize, "oc")
+									glColor(1, 1, 1, 1)
+									drawnCount = drawnCount + 1
+									if not showAllLetters then
+										break
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end

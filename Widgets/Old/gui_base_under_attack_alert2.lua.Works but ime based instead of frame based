@@ -1,0 +1,30 @@
+function widget:GetInfo()
+  return {
+    name    = "Base Under Attack Alert",
+    desc    = "Plays a StarCraft-style alert sound when your factory is attacked",
+    author  = "ChatGPT + You",
+    date    = "2025-06-07",
+    license = "MIT",
+    layer   = 0,
+    enabled = true
+  }
+end
+
+local soundFile = "LuaUI/Sounds/baseisunderattack.ogg" -- ✅ No dashes, case-sensitive path
+local cooldown = 15 -- seconds between alerts
+local lastPlayTime = -math.huge
+
+local myTeamID = Spring.GetMyTeamID()
+
+function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer)
+  if unitTeam ~= myTeamID then return end
+
+  local ud = UnitDefs[unitDefID]
+  if not ud or not ud.isFactory then return end
+
+  local now = Spring.GetGameSeconds()
+  if now - lastPlayTime >= cooldown then
+    Spring.PlaySoundFile(soundFile, 3.0, "ui") -- default is 1.0
+    lastPlayTime = now
+  end
+end

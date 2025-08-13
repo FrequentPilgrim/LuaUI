@@ -1,0 +1,67 @@
+function widget:GetInfo()
+  return {
+    name    = "Commander Damage Alert (All Types + Campaign)",
+    desc    = "Plays a custom sound when any commander on your team takes damage",
+    author  = "ChatGPT",
+    date    = "2025-06-09",
+    license = "MIT",
+    layer   = 0,
+    enabled = true
+  }
+end
+
+local PlaySoundFile        = Spring.PlaySoundFile
+local GetMyTeamID          = Spring.GetMyTeamID
+local GetGameFrame         = Spring.GetGameFrame
+local GetUnitRulesParam    = Spring.GetUnitRulesParam
+local UnitDefs             = UnitDefs
+
+local CUSTOM_SOUND = "LuaUI/sounds/commanderistakingfire.ogg"
+local COOLDOWN_FRAMES = 450  -- 15 seconds
+local lastPlayFrame = 0
+
+-- Common commander unitDef name prefixes
+local commanderPrefixes = {
+  "dynrecon",
+  "dynstrike",
+  "dynassault",
+  "dynsupport",
+  "dynknight"
+}
+
+-- Returns true if unitDefName starts with any of the known prefixes
+local function IsCommanderByName(unitDefName)
+  for _, prefix in ipairs(commanderPrefixes) do
+    if unitDefName:sub(1, #prefix) == prefix then
+      return true
+    end
+  end
+  return false
+end
+
+local function IsCommander(unitID, unitDefID)
+  local isCmd = GetUnitRulesParam(unitID, "iscommander")
+  if isCmd == 1 then return true end
+
+  local def = UnitDefs[unitDefID]
+  if not def then return false end
+
+  return IsCommanderByName(def.name)
+end
+
+function widget:UnitDamaged(unitID, unitDefID, unitTeam)
+  if unitTeam ~= GetMyTeamID() then return end
+  if not IsCommander(unitID, unitDefID) then return end
+
+  local frame = GetGameFrame()
+  if frame - lastPlayFrame >= COOLDOWN_FRAMES then
+    lastPlayFrame = frame
+    PlaySoundFile(CUSTOM_SOUND, 1.0)
+  end
+end
+
+function widget:Initialize()
+  if not VFS.FileExists(CUSTOM_SOUND) then
+    -- File missing; silently fail
+  end
+end

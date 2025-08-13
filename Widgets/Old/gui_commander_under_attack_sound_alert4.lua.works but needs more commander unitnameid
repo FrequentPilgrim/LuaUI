@@ -1,0 +1,53 @@
+function widget:GetInfo()
+  return {
+    name    = "Commander Custom Damage Alert",
+    desc    = "Plays a custom sound when your commander is damaged",
+    author  = "ChatGPT",
+    date    = "2025-06-08",
+    license = "MIT",
+    layer   = 0,
+    enabled = true
+  }
+end
+
+local PlaySoundFile = Spring.PlaySoundFile
+local GetMyTeamID = Spring.GetMyTeamID
+local GetGameFrame = Spring.GetGameFrame
+local UnitDefs = UnitDefs
+local VFS = VFS
+
+local CUSTOM_SOUND = "LuaUI/sounds/commanderistakingfire.ogg"
+local COOLDOWN_FRAMES = 660  -- 22 seconds cooldown (30 frames per second)
+local lastPlayFrame = 0
+
+local function IsCommander(unitDefID)
+  local def = UnitDefs[unitDefID]
+  if not def then return false end
+
+  if def.customParams and def.customParams.iscommander == "1" then
+    return true
+  end
+
+  if string.sub(def.name, -5) == "_base" then
+    return true
+  end
+
+  return false
+end
+
+function widget:UnitDamaged(unitID, unitDefID, unitTeam)
+  if unitTeam ~= GetMyTeamID() then return end
+  if not IsCommander(unitDefID) then return end
+
+  local frame = GetGameFrame()
+  if frame - lastPlayFrame >= COOLDOWN_FRAMES then
+    lastPlayFrame = frame
+    PlaySoundFile(CUSTOM_SOUND, 1.0)
+  end
+end
+
+function widget:Initialize()
+  if not VFS.FileExists(CUSTOM_SOUND) then
+    -- No debug output per your request
+  end
+end

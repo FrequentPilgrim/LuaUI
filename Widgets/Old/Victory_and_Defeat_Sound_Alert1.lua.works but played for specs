@@ -1,0 +1,30 @@
+function widget:GetInfo()
+  return {
+    name    = "Victory and Defeat Sound Alert",
+    desc    = "Plays a sound on victory or defeat",
+    author  = "FrequentPilgrim",
+    date    = "2025-06-08",
+    license = "GNU GPL v2",
+    enabled = true,
+    layer   = 0,
+  }
+end
+
+local victorySound = "LuaUI/Sounds/congratulationscommander.ogg"
+local defeatSound = "LuaUI/Sounds/wehavebeenannihilated.ogg"
+local played = false
+
+function widget:GameOver(winningAllyTeams)
+  if played then return end
+  played = true
+
+  local myAllyTeamID = Spring.GetMyAllyTeamID()
+  for _, allyTeamID in ipairs(winningAllyTeams) do
+    if allyTeamID == myAllyTeamID then
+      Spring.PlaySoundFile(victorySound, 3.0, "ui")
+      return
+    end
+  end
+
+  Spring.PlaySoundFile(defeatSound, 3.0, "ui")
+end

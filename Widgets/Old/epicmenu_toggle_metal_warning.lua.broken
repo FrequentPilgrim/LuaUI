@@ -1,0 +1,33 @@
+function widget:GetInfo()
+	return {
+		name = "epicmenu_toggle_metal_warning",
+		desc = "Epic Menu toggle for Metal Excess Warning widget",
+		author = "ChatGPT",
+		version = "1.1",
+		enabled = true,
+	}
+end
+
+local widgetName = "Metal Excess Warning"
+
+-- 🟡 MUST be global so Epic Menu picks it up
+options_path = "Settings/Audio/Voiced Alerts"
+
+options = {
+	{
+		key = "metalExcessEnabled",
+		name = "Enable Metal Excess Warning",
+		desc = "Plays a sound when your metal is overflowing. This is equivalent to enabling the widget in F11 menu.",
+		type = "bool",
+		value = function()
+			return widgetHandler.knownWidgets[widgetName] and widgetHandler:IsWidgetEnabled(widgetName)
+		end,
+		OnChange = function(val)
+			if val then
+				widgetHandler:EnableWidget(widgetName)
+			else
+				widgetHandler:DisableWidget(widgetName)
+			end
+		end,
+	},
+}

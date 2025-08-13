@@ -1,0 +1,54 @@
+function widget:GetInfo()
+  return {
+    name      = "MetalExcessDetector",
+    desc      = "Detects when metal is near full and usage is low, prints debug messages",
+    author    = "ChatGPT",
+    date      = "2025-06-09",
+    license   = "MIT",
+    layer     = 0,
+    enabled   = true,
+  }
+end
+
+local myTeamID
+local lastExcessState = false
+local timer = 0
+
+function widget:Initialize()
+  myTeamID = Spring.GetMyTeamID()
+  Spring.Echo("[MetalExcessDetector] Initialized for teamID:", tostring(myTeamID))
+end
+
+function widget:Update(dt)
+  if not myTeamID then return end
+  timer = timer + dt
+  if timer < 2 then return end -- check every 2 seconds
+  timer = 0
+
+  local current, storage, pull, income, expense = Spring.GetTeamResources(myTeamID, "metal")
+  if not current or not storage or storage == 0 then
+    Spring.Echo("[MetalExcessDetector] Warning: invalid metal resource data")
+    return
+  end
+
+  Spring.Echo(string.format(
+    "[MetalExcessDetector] metal: current=%.1f, storage=%.1f, pull=%.1f, income=%.1f, expense=%.1f",
+    current, storage, pull, income, expense))
+
+  local metalLevel = current / storage
+  -- loosen condition for easier testing, adjust thresholds as you want:
+  local isExcess = (metalLevel > 0.9) and (pull < 5)
+
+  if isExcess ~= lastExcessState then
+    lastExcessState = isExcess
+    if isExcess then
+      Spring.Echo(string.format("[MetalExcessDetector] ⚠️ Metal excess detected! Level: %.2f%%, Pull: %.2f", metalLevel * 100, pull))
+    else
+      Spring.Echo("[MetalExcessDetector] Metal excess cleared.")
+    end
+  end
+end
+
+function widget:Shutdown()
+  Spring.Echo("[MetalExcessDetector] Shutdown")
+end

@@ -1,0 +1,20 @@
+function widget:GetInfo()
+    return {
+        name      = "Backspace Deselect",
+        desc      = "Deselects all units once when backspace is pressed (non-repeating)",
+        author    = "ChatGPT",
+        date      = "2025-06-04",
+        license   = "MIT",
+        layer     = 0,
+        enabled   = true,
+    }
+end
+
+-- Called when a key is pressed
+function widget:KeyPress(key, mods, isRepeat)
+    if key == Spring.GetKeyCode("backspace") and not isRepeat then
+        Spring.SelectUnitArray({})
+        return true
+    end
+    return false
+end

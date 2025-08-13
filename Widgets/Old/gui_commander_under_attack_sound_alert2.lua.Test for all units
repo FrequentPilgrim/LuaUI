@@ -1,0 +1,46 @@
+function widget:GetInfo()
+  return {
+    name      = "Commander Custom Damage Alert (Diagnostic)",
+    desc      = "Debug sound on any damage to confirm sound works",
+    author    = "ChatGPT",
+    date      = "2025-06-08",
+    license   = "MIT",
+    layer     = 0,
+    enabled   = true
+  }
+end
+
+local Echo = Spring.Echo
+local PlaySoundFile = Spring.PlaySoundFile
+local GetUnitDefID = Spring.GetUnitDefID
+local GetUnitTeam = Spring.GetUnitTeam
+local VFSFileExists = VFS.FileExists
+local GetGameFrame = Spring.GetGameFrame
+
+local lastPlayFrame = 0
+local cooldownFrames = 90  -- Play every 3 seconds max
+local CUSTOM_SOUND = "LuaUI/sounds/commanderistakingfire.ogg"
+
+function widget:Initialize()
+  if VFSFileExists(CUSTOM_SOUND) then
+    Echo("[SoundTest] Custom sound file found: " .. CUSTOM_SOUND)
+  else
+    Echo("[SoundTest] ERROR: Custom sound file NOT FOUND: " .. CUSTOM_SOUND)
+  end
+end
+
+function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer)
+  if not unitDefID then return end
+  local def = UnitDefs[unitDefID]
+  if not def then return end
+
+  local frame = GetGameFrame()
+  if frame - lastPlayFrame >= cooldownFrames then
+    lastPlayFrame = frame
+    Echo("[SoundTest] Any unit damaged: " .. def.name .. " | Playing sound...")
+    local success = PlaySoundFile(CUSTOM_SOUND, 1.0)
+    if not success then
+      Echo("[SoundTest] WARNING: Sound play failed!")
+    end
+  end
+end

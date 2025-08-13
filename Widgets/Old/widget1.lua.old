@@ -1,0 +1,32 @@
+function widget:GetInfo()
+  return {
+    name      = "EpicMenu_Integration_Test",
+    desc      = "Tests if Epic Menu toggle integration works.",
+    author    = "Test",
+    version   = "1.0",
+    date      = "2025-06-18",
+    license   = "MIT",
+    layer     = 0,
+    enabled   = false, -- start disabled to verify toggle effect
+  }
+end
+
+-- Global options table picked up by gui_epicmenu.lua
+options = {
+  {
+    key    = 'test_toggle',
+    name   = 'Enable Test Widget',
+    desc   = 'A toggle to test Epic Menu integration.',
+    type   = 'bool',
+    value  = true,
+    scope  = 'widget',
+  },
+}
+
+function widget:Initialize()
+  Spring.Echo("[EpicMenu_Integration_Test] Widget initialized")
+end
+
+function widget:Shutdown()
+  Spring.Echo("[EpicMenu_Integration_Test] Widget shutdown")
+end

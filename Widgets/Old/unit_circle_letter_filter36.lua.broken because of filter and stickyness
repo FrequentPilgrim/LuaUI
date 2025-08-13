@@ -1,0 +1,195 @@
+function widget:GetInfo()
+    return {
+        name    = "Mouse Circle Unit Filter (No Buildings)",
+        desc    = "Selects nearby non-building units around mouse while Forward button held, with optional letter group filtering",
+        author  = "FrequentPilgrim + ChatGPT",
+        date    = "2025-06-13",
+        license = "GNU GPL v2",
+        layer   = 1,
+        enabled = true
+    }
+end
+
+-- === Config ===
+local RADIUS = 450
+local MOUSE_BUTTON = 5 -- Forward mouse button
+
+-- === State ===
+local selecting = false
+local filteringActive = false
+local cursorX, cursorY = 0, 0
+local lastSelectedUnits = {}
+local activeLetters = {}
+local shiftHeld = false
+local ctrlHeld = false
+
+-- === Keycode mapping (a–z) ===
+local keycodeToLetter = {}
+for i = 65, 90 do
+    keycodeToLetter[Spring.GetKeyCode(string.char(i):lower())] = string.char(i)
+end
+
+-- === GL shortcuts ===
+local glColor = gl.Color
+local glLineWidth = gl.LineWidth
+local glBeginEnd = gl.BeginEnd
+local glVertex = gl.Vertex
+local glDepthTest = gl.DepthTest
+
+-- === Helpers ===
+local function DrawWorldCircle(cx, cy, cz, radius, segments)
+    segments = segments or 64
+    local radStep = 2 * math.pi / segments
+    glBeginEnd(GL.LINE_LOOP, function()
+        for i = 0, segments - 1 do
+            local a = i * radStep
+            glVertex(cx + math.cos(a) * radius, cy + 1, cz + math.sin(a) * radius)
+        end
+    end)
+end
+
+local function GetUnitsInCircle(x, y)
+    local type, coord = Spring.TraceScreenRay(x, y, true)
+    if type ~= "ground" or not coord then return {}, nil, nil, nil end
+    local gx, gy, gz = coord[1], coord[2], coord[3]
+    local all = Spring.GetUnitsInCylinder(gx, gz, RADIUS, Spring.GetMyTeamID())
+    local filtered = {}
+    for _, unitID in ipairs(all) do
+        local udid = Spring.GetUnitDefID(unitID)
+        if udid and not UnitDefs[udid].isBuilding then
+            table.insert(filtered, unitID)
+        end
+    end
+    return filtered, gx, gy, gz
+end
+
+-- === Input handling ===
+function widget:MousePress(x, y, button)
+    if button ~= MOUSE_BUTTON then return false end
+
+    local alt, ctrl, meta, shift = Spring.GetModKeyState()
+    shiftHeld = shift
+    ctrlHeld = ctrl
+
+    selecting = true
+    filteringActive = false
+    cursorX, cursorY = x, y
+    activeLetters = {}
+    lastSelectedUnits = {}
+
+    if shiftHeld then
+        for _, id in ipairs(Spring.GetSelectedUnits()) do
+            lastSelectedUnits[id] = true
+        end
+    else
+        Spring.SelectUnitArray({}, false) -- clear selection
+    end
+
+    return true
+end
+
+function widget:MouseRelease(_, _, button)
+    if button == MOUSE_BUTTON then
+        selecting = false
+        filteringActive = false
+        activeLetters = {}
+        return true
+    end
+end
+
+function widget:Update()
+    if not selecting or filteringActive then return end
+
+    local mx, my = Spring.GetMouseState()
+    cursorX, cursorY = mx, my
+
+    local units, gx, gy, gz = GetUnitsInCircle(mx, my)
+    local toSelect = {}
+
+    for _, unitID in ipairs(units) do
+        if not lastSelectedUnits[unitID] then
+            local isIdle = true
+            if ctrlHeld then
+                local cmdQueue = Spring.GetCommandQueue(unitID, 1)
+                isIdle = (not cmdQueue or #cmdQueue == 0)
+            end
+            if isIdle then
+                lastSelectedUnits[unitID] = true
+                table.insert(toSelect, unitID)
+            end
+        end
+    end
+
+    if #toSelect > 0 then
+        Spring.SelectUnitArray(Spring.GetSelectedUnits(), false)
+        Spring.SelectUnitArray(toSelect, true)
+    end
+end
+
+function widget:KeyPress(key)
+    if not selecting then return false end
+
+    local letter = keycodeToLetter[key]
+    if not letter then return false end
+
+    local groupDefs = WG.LetterUnitTypeMultiAutoGroups
+    if not groupDefs then
+        Spring.Echo("[MouseCircleFilter] No group definitions found in WG.")
+        return true
+    end
+
+    activeLetters[letter] = true
+    filteringActive = true
+
+    -- Filter original set of units (lastSelectedUnits) by all activeLetters
+    local filtered = {}
+    for unitID in pairs(lastSelectedUnits) do
+        local udid = Spring.GetUnitDefID(unitID)
+        if udid then
+            local def = UnitDefs[udid]
+            local matchAll = true
+            for ltr in pairs(activeLetters) do
+                if not (groupDefs[ltr] and groupDefs[ltr][def.name]) then
+                    matchAll = false
+                    break
+                end
+            end
+            if matchAll then
+                table.insert(filtered, unitID)
+            end
+        end
+    end
+
+    Spring.SelectUnitArray({}, false)
+    if #filtered > 0 then
+        Spring.SelectUnitArray(filtered, true)
+    end
+
+    local activeList = {}
+    for ltr in pairs(activeLetters) do table.insert(activeList, ltr) end
+    table.sort(activeList)
+    Spring.Echo(string.format("[MouseCircleFilter] Filtering by: %s (%d unit(s))",
+        table.concat(activeList, ", "), #filtered))
+    return true
+end
+
+function widget:DrawWorld()
+    if not selecting then return end
+
+    local _, gx, gy, gz = GetUnitsInCircle(cursorX, cursorY)
+    if not gx then return end
+
+    if shiftHeld then
+        glColor(0.2, 1.0, 0.2, 0.8) -- green
+    elseif ctrlHeld then
+        glColor(1.0, 1.0, 0.2, 0.8) -- yellow
+    else
+        glColor(0.4, 0.8, 1.0, 0.8) -- blue
+    end
+
+    glLineWidth(4)
+    glDepthTest(true)
+    DrawWorldCircle(gx, gy, gz, RADIUS)
+    glDepthTest(false)
+    glColor(1, 1, 1, 1)
+end

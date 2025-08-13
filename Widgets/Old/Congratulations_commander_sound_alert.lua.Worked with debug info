@@ -1,0 +1,37 @@
+function widget:GetInfo()
+  return {
+    name    = "Victory Sound Alert",
+    desc    = "Plays a sound when you win the game",
+    author  = "ChatGPT",
+    date    = "2025-06-08",
+    license = "GNU GPL v2",
+    layer   = 0,
+    enabled = true
+  }
+end
+
+local soundFile = "LuaUI/Sounds/congratulationscommander.ogg"
+local played = false
+
+function widget:GameOver(winningAllyTeams)
+  if played then return end
+  played = true
+
+  local myAllyTeamID = Spring.GetMyAllyTeamID()
+  Spring.Echo("[VictorySound] Game over detected. Your allyTeamID:", myAllyTeamID)
+
+  for _, allyTeamID in ipairs(winningAllyTeams) do
+    Spring.Echo("[VictorySound] Checking winning allyTeam:", allyTeamID)
+    if allyTeamID == myAllyTeamID then
+      Spring.Echo("[VictorySound] Victory match found! Attempting to play sound.")
+      local success = Spring.PlaySoundFile(soundFile, 3.0, "ui")
+      if not success then
+        Spring.Echo("[VictorySound] WARNING: Sound failed to play on 'ui', retrying on 'master'")
+        Spring.PlaySoundFile(soundFile, 3.0, "master")
+      end
+      return
+    end
+  end
+
+  Spring.Echo("[VictorySound] You did not win.")
+end

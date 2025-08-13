@@ -1,0 +1,87 @@
+function widget:GetInfo()
+	return {
+		name = "Metal Excess Warning",
+		desc = "Plays a sound when metal is excessing (after first 30s, on 45s cooldown)",
+		author = "ChatGPT + You",
+		version = "1.7",
+		date = "2025-06-10",
+		license = "GPL v2",
+		layer = 0,
+		enabled = true,
+	}
+end
+
+local GetTeamResources = Spring.GetTeamResources
+local PlaySoundFile = Spring.PlaySoundFile
+local GetGameFrame = Spring.GetGameFrame
+local GetMyTeamID = Spring.GetMyTeamID
+
+local myTeamID
+local lastSoundFrame = -999999
+local cooldownFrames = 45 * 30
+local gracePeriodFrames = 30 * 30
+
+-- Will be set from config data or Epic Menu
+local enabledViaMenu = true
+
+function widget:Initialize()
+	if not enabledViaMenu then
+		widgetHandler:RemoveWidget(self) -- Safe self-disable on init
+		return
+	end
+	myTeamID = GetMyTeamID()
+end
+
+function widget:GameFrame(f)
+	if not myTeamID then return end
+	if f % 30 ~= 0 then return end
+	if f < gracePeriodFrames then return end
+
+	local current, storage = GetTeamResources(myTeamID, "metal")
+	local adjustedStorage = (storage or 0) - 10000
+
+	if current and adjustedStorage and current > adjustedStorage then
+		if (f - lastSoundFrame) >= cooldownFrames then
+			PlaySoundFile("LuaUI/Sounds/metalcapacityreached.ogg", 1, "ui")
+			lastSoundFrame = f
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Epic Menu Toggle (SAFE VERSION)
+--------------------------------------------------------------------------------
+
+options_path = "Settings/Audio/Voiced Alerts"
+
+options = {
+	{
+		key = "metalExcessWarning",
+		name = "Enable Metal Excess Warning",
+		desc = "Toggles sound alert when your metal is excessing.",
+		type = "bool",
+		value = true,
+		OnChange = function(val)
+			enabledViaMenu = val
+			-- DO NOT disable from inside the widget to avoid crash!
+			-- When unchecked, widget is removed on next /luaui reload
+			-- When checked, widget is immediately re-enabled via Epic Menu system
+		end,
+	}
+}
+
+--------------------------------------------------------------------------------
+-- Config Persistence
+--------------------------------------------------------------------------------
+
+function widget:GetConfigData()
+	return {
+		enabledViaMenu = enabledViaMenu
+	}
+end
+
+function widget:SetConfigData(data)
+	if type(data) == "table" and type(data.enabledViaMenu) == "boolean" then
+		enabledViaMenu = data.enabledViaMenu
+	end
+end

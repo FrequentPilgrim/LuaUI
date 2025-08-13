@@ -1,0 +1,58 @@
+function widget:GetInfo()
+  return {
+    name      = "Metal Excess Sound Alert",
+    desc      = "Plays a sound when metal is excessing, with cooldown and grace period",
+    author    = "ChatGPT",
+    date      = "2025-06-09",
+    license   = "MIT",
+    layer     = 0,
+    enabled   = true
+  }
+end
+
+local SOUND_PATH = "LuaUI/Sounds/metalcapacityreached.ogg"
+local SOUND_COOLDOWN_FRAMES = 45 * 30  -- 45 seconds * 30 frames/sec
+local GRACE_PERIOD_FRAMES = 30 * 30    -- 30 seconds grace period after game start
+
+local lastSoundFrame = -999999
+
+function widget:Initialize()
+  lastSoundFrame = -999999
+end
+
+function widget:Update()
+  local frame = Spring.GetGameFrame()
+  if frame < GRACE_PERIOD_FRAMES then
+    return
+  end
+
+  -- throttle to once per second (every 30 frames)
+  if frame % 30 ~= 0 then
+    return
+  end
+
+  local playerID = Spring.GetMyPlayerID()
+  if not playerID or playerID < 0 then
+    return
+  end
+
+  local _, teamID = Spring.GetPlayerInfo(playerID)
+  if not teamID or type(teamID) ~= "number" then
+    return
+  end
+
+  local metal = Spring.GetTeamResources(teamID, "metal")
+  if not metal then
+    return
+  end
+
+  local current = metal.current or 0
+  local storage = metal.storage or 0
+
+  if current > storage then
+    if (frame - lastSoundFrame) >= SOUND_COOLDOWN_FRAMES then
+      Spring.PlaySoundFile(SOUND_PATH, 1.0, nil, 'ui')
+      lastSoundFrame = frame
+    end
+  end
+end

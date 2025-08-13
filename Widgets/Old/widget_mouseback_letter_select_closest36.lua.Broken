@@ -1,0 +1,103 @@
+function widget:KeyPress(key, mods, isRepeat)
+    if not mouseBackHeld then return false end
+
+    local letter = keycodeToLetter[key]
+    if not letter then return false end
+
+    shiftHeld = mods.shift
+    ctrlHeld = mods.ctrl
+
+    local groupTable = WG.LetterUnitTypeMultiAutoGroups
+    if not groupTable then
+        Spring.Echo("[Selector] WG.LetterUnitTypeMultiAutoGroups is missing.")
+        return false
+    end
+
+    local defNames = groupTable[letter]
+    if not defNames then
+        Spring.Echo("[Selector] No units assigned to letter group:", letter)
+        return true
+    end
+
+    local mx, my = Spring.GetMouseState()
+    local type, pos = Spring.TraceScreenRay(mx, my, true)
+    if type ~= "ground" or not pos then
+        Spring.Echo("[Selector] Mouse not over ground.")
+        return true
+    end
+
+    local cx, cy, cz = pos[1], pos[2], pos[3]
+    local myTeam = Spring.GetMyTeamID()
+    local allUnits = Spring.GetAllUnits()
+    local candidates = {}
+
+    for _, unitID in ipairs(allUnits) do
+        if Spring.GetUnitTeam(unitID) == myTeam then
+            local udid = Spring.GetUnitDefID(unitID)
+            if udid then
+                local defName = UnitDefs[udid].name
+                if defNames[defName] then
+                    if not selectedUnitsThisCycle[unitID] and (not shiftHeld or not Spring.IsUnitSelected(unitID)) then
+                        local ux, uy, uz = Spring.GetUnitPosition(unitID)
+                        local distSq = (ux - cx)^2 + (uz - cz)^2
+                        local idle = true
+                        if ctrlHeld then
+                            local queue = Spring.GetCommandQueue(unitID, 1)
+                            idle = queue == nil or #queue == 0
+                        end
+                        if idle then
+                            table.insert(candidates, { id = unitID, dist = distSq, pos = { ux, uy, uz } })
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+
+    -- If CTRL is held, do special 1-idle-unit move logic
+    if ctrlHeld then
+        if candidates[1] then
+            local unitID = candidates[1].id
+            Spring.SelectUnitArray({ unitID }, false)
+            Spring.GiveOrderToUnit(unitID, CMD.MOVE, { cx, cy, cz }, {})
+            selectedUnitsThisCycle[unitID] = true
+            lastSelectedUnitPositions = { candidates[1].pos }
+            drawTimer = 20
+        else
+            Spring.Echo("[Selector] No idle units to command.")
+        end
+        return true
+    end
+
+    -- Default behavior (no ctrl)
+    local unitsToSelect = {}
+    local newlySelectedPositions = {}
+    for i = 1, math.min(1, #candidates) do
+        local candidate = candidates[i]
+        table.insert(unitsToSelect, candidate.id)
+        table.insert(newlySelectedPositions, candidate.pos)
+        selectedUnitsThisCycle[candidate.id] = true
+    end
+
+    if #unitsToSelect > 0 then
+        if shiftHeld then
+            Spring.SelectUnitArray(unitsToSelect, true)
+        else
+            if not hasClearedSelectionThisCycle then
+                Spring.SelectUnitArray(unitsToSelect, false)
+                hasClearedSelectionThisCycle = true
+            else
+                Spring.SelectUnitArray(unitsToSelect, true)
+            end
+        end
+        lastSelectedUnitPositions = newlySelectedPositions
+        drawTimer = 20
+    else
+        lastSelectedUnitPositions = {}
+        drawTimer = 0
+    end
+
+    return true
+end

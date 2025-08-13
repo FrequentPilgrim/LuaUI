@@ -1,0 +1,31 @@
+function widget:GetInfo()
+  return {
+    name    = "Select Start Sound",
+    desc    = "Plays a sound when selecting your start location",
+    author  = "ChatGPT",
+    date    = "2025-06-09",
+    license = "GNU GPL, v2 or later",
+    layer   = 0,
+    enabled = true
+  }
+end
+
+local soundFile = "LuaUI/Sounds/selectstartinglocation.ogg"
+local soundPlayed = false
+
+function widget:Initialize()
+  if Spring.GetSpectatingState() then
+    widgetHandler:RemoveWidget(self)
+    return
+  end
+end
+
+function widget:GameFrame(frame)
+  if soundPlayed or frame < 1 then return end
+
+  local postype = Spring.GetGameRulesParam("startPostype")
+  if postype == 2 then
+    Spring.PlaySoundFile(soundFile, 1.0, "ui")
+    soundPlayed = true
+  end
+end

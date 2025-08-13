@@ -1,0 +1,68 @@
+function widget:GetInfo()
+    return {
+        name      = "MetalExcessDetector",
+        desc      = "Detects when metal is excessing and prints debug message",
+        author    = "ChatGPT",
+        date      = "2025-06-09",
+        license   = "MIT",
+        layer     = 0,
+        enabled   = true
+    }
+end
+
+local myTeamID
+local lastCheckFrame = 0
+local checkIntervalFrames = 60 * 2 -- 2 seconds at 30 FPS (Zero-K usually runs at 30 FPS)
+
+local function GetMetalStorage(teamID)
+    local metalStorageCapacity = 0
+    local unitIDs = Spring.GetTeamUnits(teamID)
+    for _, unitID in ipairs(unitIDs) do
+        local udid = Spring.GetUnitDefID(unitID)
+        if udid then
+            local ud = UnitDefs[udid]
+            if ud and ud.metalStorage and ud.metalStorage > 0 then
+                metalStorageCapacity = metalStorageCapacity + ud.metalStorage
+            end
+        end
+    end
+    return metalStorageCapacity
+end
+
+local function CheckMetalExcess()
+    local metalCurrent, metalPull, metalIncome, metalExpense = Spring.GetTeamResources(myTeamID, "metal")
+    local metalStorageCapacity = GetMetalStorage(myTeamID)
+
+    if metalStorageCapacity == 0 then
+        Spring.Echo("[MetalExcessDebug] Metal storage capacity unknown or zero")
+        return
+    end
+
+    local metalLevel = metalCurrent / metalStorageCapacity
+
+    Spring.Echo(string.format("[MetalExcessDebug] Metal: current=%.1f, storage=%.1f, level=%.3f, pull=%.1f, income=%.1f, expense=%.1f", 
+        metalCurrent, metalStorageCapacity, metalLevel, metalPull, metalIncome, metalExpense))
+
+    local isExcess = (metalLevel > 0.9) and (metalPull < 5)
+    if isExcess then
+        Spring.Echo("[MetalExcessDebug] Metal excess detected!")
+    end
+end
+
+function widget:Initialize()
+    myTeamID = Spring.GetMyTeamID()
+    if not myTeamID then
+        Spring.Echo("[MetalExcessDebug] Could not get team ID!")
+        widgetHandler:RemoveWidget()
+        return
+    end
+
+    Spring.Echo("[MetalExcessDebug] Initialized on team " .. myTeamID)
+end
+
+function widget:GameFrame(frame)
+    if frame - lastCheckFrame >= checkIntervalFrames then
+        lastCheckFrame = frame
+        CheckMetalExcess()
+    end
+end
