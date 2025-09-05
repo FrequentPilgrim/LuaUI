@@ -1,0 +1,79 @@
+--------------------------------------------------------------------------------
+-- dbg_start_trigger_sniffer.lua
+-- Logs what happens exactly when the mid-screen "Starting / 3 2 1 0" appears.
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name    = "DBG Start Trigger Sniffer",
+    desc    = "Sniffs LuaMsgs + GameRulesParams around countdown start",
+    author  = "you",
+    date    = "2025-08-17",
+    license = "GPL v2 or later",
+    layer   = 0,
+    enabled = true,
+  }
+end
+
+local lastVals, lastNames = {}, {}
+local lastGS = nil
+local function say(s) Spring.Echo("[TRIG] " .. s) end
+
+-- 1) Log *any* LuaRules -> LuaUI message (common for countdowns)
+function widget:RecvLuaMsg(msg, playerID)
+  -- many games send simple strings like "countdown:3" or "startcountdown"
+  -- dump short messages verbatim; longer ones trimmed
+  local m = tostring(msg or "")
+  if #m > 180 then m = m:sub(1,180) .. " …" end
+  say(("RecvLuaMsg from %s: %s"):format(playerID or "?", m))
+end
+
+-- 2) Watch GameRulesParams for new keys or value changes
+local function pollGRP()
+  local vals, names = Spring.GetGameRulesParams()
+  if not vals then return end
+  if names then
+    -- first time: list all names briefly
+    if not next(lastNames) then
+      for name, id in pairs(names) do
+        local v = vals[id]
+        -- only print obviously relevant ones
+        if name:lower():find("count") or name:lower():find("start") then
+          say(("GRP initial: %s = %s"):format(name, tostring(v)))
+        end
+      end
+    end
+    -- detect new names / changed values
+    for name, id in pairs(names) do
+      local v  = vals[id]
+      local lv = lastVals[id]
+      if not lastNames[name] then
+        say(("GRP NEW: %s = %s"):format(name, tostring(v)))
+      elseif lv ~= nil and v ~= lv then
+        -- only spam likely items
+        if name:lower():find("count") or name:lower():find("start") then
+          say(("GRP CHG: %s: %s -> %s"):format(name, tostring(lv), tostring(v)))
+        end
+      end
+    end
+    lastNames = names
+    lastVals  = vals
+  end
+end
+
+function widget:Update(dt)
+  -- 3) Correlate with yellow game timer for context
+  local gs = Spring.GetGameSeconds()
+  if gs ~= lastGS then
+    -- print when we cross coarse landmarks
+    if gs and (gs == -10 or gs == -5 or gs == -4 or gs == -3 or gs == -2 or gs == -1 or gs == 0) then
+      say(("GetGameSeconds = %d"):format(gs))
+    end
+    lastGS = gs
+  end
+  pollGRP()
+end
+
+function widget:GameStart()
+  say("GameStart() fired (yellow clock switched to +time).")
+end

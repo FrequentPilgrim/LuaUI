@@ -1,0 +1,57 @@
+--------------------------------------------------------------------------------
+-- Battle Start Audio (tiny)
+-- • Plays at t = -3.5s on the in-game (yellow) countdown if it exists.
+-- • Otherwise plays immediately at GameStart (force start / instant 0).
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name    = "Battle Start Audio (tiny)",
+    desc    = "Plays 3.5s before 0, or at GameStart if no countdown",
+    author  = "you",
+    version = "1.0",
+    layer   = 0,
+    enabled = true,
+  }
+end
+
+-- ==== CONFIG ====
+local CLIP_PATH   = "LuaUI/Sounds/battle_begins_in_3_2_1.ogg"
+local CLIP_LENGTH = 3.5          -- seconds
+local FUDGE       = 0.00         -- seconds; + starts earlier, - later
+
+-- ==== INTERNALS ====
+local played = false
+
+local function play()
+  if played then return end
+  if not VFS.FileExists(CLIP_PATH) then
+    Spring.Echo("[battle_start_audio] missing clip: " .. CLIP_PATH)
+    played = true
+    return
+  end
+  Spring.PlaySoundStream(CLIP_PATH, 1.0) -- UI/music stream
+  played = true
+end
+
+-- Called every frame. We look at the **game time**:
+-- many ZK setups show negative seconds before start; when it reaches -3.5, play.
+function widget:Update()
+  if played then return end
+  local gs = Spring.GetGameSeconds()
+  if gs and gs < 0 then
+    -- when countdown reaches -CLIP_LENGTH (±FUDGE), start the audio
+    if gs >= -(CLIP_LENGTH + FUDGE) then
+      play()
+    end
+  end
+end
+
+-- If there was no negative countdown (force start), engine calls this at 0.
+function widget:GameStart()
+  if not played then play() end
+end
+
+function widget:Shutdown()
+  Spring.StopSoundStream()
+end

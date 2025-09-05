@@ -1,0 +1,73 @@
+function widget:GetInfo()
+	return {
+		name      = "Countdown Start Audio",
+		desc      = "Plays once exactly when the STARTING splash appears (robust to ForceStart).",
+		author    = "You",
+		date      = "2025-08-17",
+		license   = "GPLv2+",
+		layer     = -100,
+		enabled   = true
+	}
+end
+
+-- ====== CONFIG ======
+local START_SOUND    = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+local START_VOL      = 1.0
+local START_CHAN     = 'ui'
+local DEBUG_MESSAGES = false  -- set true while testing
+
+-- ====== STATE ======
+local played = false
+local lastS  = nil
+
+local function log(msg)
+	if DEBUG_MESSAGES then Spring.Echo('game_message:[Countdown] '..msg) end
+end
+
+local function PlayOnce()
+	if played then return end
+	if VFS.FileExists(START_SOUND) then
+		Spring.PlaySoundFile(START_SOUND, START_VOL, START_CHAN)
+		log('start cue fired')
+		played = true
+	else
+		log('MISSING SOUND: '..START_SOUND)
+	end
+end
+
+-- Primary trigger: exact console line that appears with the overlay.
+-- We filter to avoid firing on player chat.
+function widget:AddConsoleLine(msg, priority)
+	if played or type(msg) ~= "string" then return end
+
+	-- quick chat-ish filters (player chat/system prints often contain ":" or "<name>")
+	if msg:find(":") or msg:find("<") or msg:find(">") then return end
+
+	-- normalize and match a tight "Starting" line (allow dots/exclamation and whitespace)
+	local m = msg:lower():gsub("^%s+", ""):gsub("%s+$", "")
+	if m:match("^starting[%.!]*$") then
+		PlayOnce()
+	end
+end
+
+-- Fallback trigger: first entry into the 3..0 window.
+-- Covers any theme/host that might suppress the console line.
+function widget:PreGameTimekeeping(secondsUntilStart)
+	if played then return end
+	local s = math.floor((secondsUntilStart or -999) + 0.0001)
+	-- Fire on first transition from >3 to <=3; prevents map-load early fires.
+	if s >= 0 and s <= 3 and (lastS == nil or lastS > 3) then
+		PlayOnce()
+	end
+	lastS = s
+end
+
+function widget:GameStart()
+	-- Once the match actually begins, remove the pregame callin for cleanliness
+	widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+function widget:Shutdown()
+	played = false
+	lastS  = nil
+end

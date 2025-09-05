@@ -1,0 +1,166 @@
+function widget:GetInfo()
+  return {
+    name      = "Audio Alert - Commander Destroyed/Upgrade Sounds",
+    desc      = "Plays a sound when your commander is destroyed or when an upgrade completes",
+    author    = "FrequentPilgrim (+Epic Menu toggle patch)",
+    date      = "2025-08-16",
+    license   = "GNU GPL v2",
+    layer     = 0,
+    enabled   = true,
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Epic Menu Toggle (additive, with persistence)
+--------------------------------------------------------------------------------
+options = options or {}
+options.enableCommanderDestroyedAlert = {
+  name  = "Commander Destroyed Alert",
+  desc  = "Play an alert sound when your commander has been destroyed.",
+  type  = "bool",
+  value = true,
+  path  = "Settings/Audio/Audio Alerts",
+}
+options.enableCommanderUpgradeAlert = {
+  name  = "Commander Upgrade Complete Alert",
+  desc  = "Play an alert sound when your commander finishes an upgrade.",
+  type  = "bool",
+  value = true,
+  path  = "Settings/Audio/Audio Alerts",
+}
+
+function widget:GetConfigData()
+  return {
+    enableCommanderDestroyedAlert = options.enableCommanderDestroyedAlert
+      and options.enableCommanderDestroyedAlert.value or true,
+    enableCommanderUpgradeAlert = options.enableCommanderUpgradeAlert
+      and options.enableCommanderUpgradeAlert.value or true,
+  }
+end
+
+function widget:SetConfigData(data)
+  if data then
+    if data.enableCommanderDestroyedAlert ~= nil
+       and options and options.enableCommanderDestroyedAlert then
+      options.enableCommanderDestroyedAlert.value = data.enableCommanderDestroyedAlert
+    end
+    if data.enableCommanderUpgradeAlert ~= nil
+       and options and options.enableCommanderUpgradeAlert then
+      options.enableCommanderUpgradeAlert.value = data.enableCommanderUpgradeAlert
+    end
+  end
+end
+
+local function DestroyFeatureEnabled()
+  return options and options.enableCommanderDestroyedAlert
+     and options.enableCommanderDestroyedAlert.value
+end
+local function UpgradeFeatureEnabled()
+  return options and options.enableCommanderUpgradeAlert
+     and options.enableCommanderUpgradeAlert.value
+end
+
+--------------------------------------------------------------------------------
+-- Core
+--------------------------------------------------------------------------------
+local GetMyTeamID       = Spring.GetMyTeamID
+local GetUnitRulesParam = Spring.GetUnitRulesParam
+local PlaySoundFile     = Spring.PlaySoundFile
+local VFS_FileExists    = VFS.FileExists
+local GetGameFrame      = Spring.GetGameFrame
+
+local UnitDefs          = UnitDefs
+local SOUND_FILE_DESTROYED = "LuaUI/sounds/commanderchassisdestroyed.ogg"
+local SOUND_FILE_UPGRADE   = "LuaUI/sounds/upgradecomplete.ogg"
+
+local commanderPrefixes = {
+  "dynrecon", "dynstrike", "dynassault", "dynsupport", "dynknight",
+  "dyntrainer", "zk_commander", "zk_custom", "zk_chassis", "comm"
+}
+
+local function IsCommander(unitID, unitDefID)
+  local unitDef = UnitDefs[unitDefID]
+  if not unitDef then return false end
+
+  local name     = unitDef.name or ""
+  local isCmd    = GetUnitRulesParam(unitID, "iscommander")
+  local commtype = GetUnitRulesParam(unitID, "commtype")
+  local level    = GetUnitRulesParam(unitID, "level")
+
+  if isCmd == 1 then return true end
+  if commtype or (level and level > 0) then return true end
+
+  for _, prefix in ipairs(commanderPrefixes) do
+    if name:sub(1, #prefix) == prefix then return true end
+  end
+
+  if name:find("_base") then return true end
+  return false
+end
+
+--------------------------------------------------------------------------------
+-- Morph-safe death confirm
+--------------------------------------------------------------------------------
+local CONFIRM_FRAMES = 30  -- ~1s
+local pendingDeaths = {}   -- array of { teamID, expires, cancelled }
+
+local function queueDeathConfirm(teamID)
+  pendingDeaths[#pendingDeaths + 1] = {
+    teamID = teamID,
+    expires = GetGameFrame() + CONFIRM_FRAMES,
+    cancelled = false,
+  }
+end
+
+local function cancelPendingIfAny(teamID)
+  for i = 1, #pendingDeaths do
+    local p = pendingDeaths[i]
+    if p and not p.cancelled and p.teamID == teamID then
+      p.cancelled = true
+      -- Play upgrade sound if enabled
+      if UpgradeFeatureEnabled() and VFS_FileExists(SOUND_FILE_UPGRADE) then
+        PlaySoundFile(SOUND_FILE_UPGRADE, 3.0)
+      end
+    end
+  end
+end
+
+function widget:GameFrame(n)
+  if #pendingDeaths == 0 then return end
+
+  local i = 1
+  while i <= #pendingDeaths do
+    local p = pendingDeaths[i]
+    if p.cancelled then
+      table.remove(pendingDeaths, i)
+    elseif n >= p.expires then
+      if DestroyFeatureEnabled() and VFS_FileExists(SOUND_FILE_DESTROYED) then
+        PlaySoundFile(SOUND_FILE_DESTROYED, 3.0)
+      end
+      table.remove(pendingDeaths, i)
+    else
+      i = i + 1
+    end
+  end
+end
+
+--------------------------------------------------------------------------------
+-- Engine Hooks
+--------------------------------------------------------------------------------
+function widget:UnitDestroyed(unitID, unitDefID, unitTeam)
+  if unitTeam ~= GetMyTeamID() then return end
+  if not IsCommander(unitID, unitDefID) then return end
+  queueDeathConfirm(unitTeam)
+end
+
+function widget:UnitCreated(unitID, unitDefID, unitTeam)
+  if unitTeam ~= GetMyTeamID() then return end
+  if not IsCommander(unitID, unitDefID) then return end
+  cancelPendingIfAny(unitTeam)
+end
+
+function widget:Initialize()
+  if not VFS_FileExists(SOUND_FILE_DESTROYED) and not VFS_FileExists(SOUND_FILE_UPGRADE) then
+    widgetHandler:RemoveWidget(self)
+  end
+end

@@ -1,0 +1,155 @@
+function widget:GetInfo()
+  return {
+    name    = "Voice Alert Bus (Global Queue)",
+    desc    = "Serializes voice clips across widgets so they never overlap",
+    author  = "you",
+    date    = "2025-09-01",
+    license = "MIT",
+    layer   = 0,         -- draw order irrelevant; bus works in Update
+    enabled = true
+  }
+end
+
+-- locals
+local PlaySoundFile = Spring.PlaySoundFile
+local GetTimer      = Spring.GetTimer
+local DiffTimers    = Spring.DiffTimers
+local VFSLoadFile   = VFS.LoadFile
+
+-- Simple WAV duration parser (PCM). OGG or unknown -> require duration in opts.
+local function wavDurationSeconds(vfsPath)
+  local data = VFSLoadFile(vfsPath)
+  if not data then return nil end
+  -- Minimal RIFF/WAVE scan
+  if data:sub(1,4) ~= "RIFF" or data:sub(9,12) ~= "WAVE" then return nil end
+  local pos, len = 13, #data
+  local numChannels, sampleRate, bitsPerSample, dataSize
+  while pos + 8 <= len do
+    local id = data:sub(pos, pos+3); pos = pos + 4
+    local sz = string.unpack("<I4", data, pos); pos = pos + 4
+    if id == "fmt " then
+      local fmt, nch, rate, byterate, blockalign, bps =
+        string.unpack("<I2I2I4I4I2I2", data, pos)
+      if fmt ~= 1 then return nil end -- only PCM
+      numChannels, sampleRate, bitsPerSample = nch, rate, bps
+    elseif id == "data" then
+      dataSize = sz
+    end
+    pos = pos + sz
+    if pos > len then break end
+  end
+  if not (numChannels and sampleRate and bitsPerSample and dataSize) then return nil end
+  local bytesPerSample = (bitsPerSample / 8) * numChannels
+  if bytesPerSample <= 0 then return nil end
+  return dataSize / (sampleRate * bytesPerSample)
+end
+
+local Bus = {
+  queue = {},
+  playing = false,
+  current = nil,
+  tStart = nil,
+  tNow = nil,
+  defaultChannel = "voice",  -- routes via Unit Reply/Voice slider
+  defaultVolume  = 1.0,
+  fallbackSecs   = 1.6,      -- used if we can't measure or caller doesn't pass duration
+  lastPlayedByKey = {},      -- for dedupe/cooldowns
+}
+
+-- Public API
+function Bus:play(soundPath, opts)
+  opts = opts or {}
+  local item = {
+    path     = soundPath,                  -- VFS path ("sounds/voice/foo.wav") or any file resolvable by VFS
+    volume   = tonumber(opts.volume) or self.defaultVolume,
+    channel  = opts.channel or self.defaultChannel, -- "voice", "ui", etc.
+    duration = opts.duration,              -- seconds; recommended for OGG
+    priority = tonumber(opts.priority) or 0,
+    key      = opts.key,                   -- dedupe key (e.g., "rearm-needed")
+    cooldown = tonumber(opts.cooldown) or 0, -- seconds
+  }
+
+  -- Dedupe on key + cooldown
+  if item.key and item.cooldown > 0 then
+    local last = self.lastPlayedByKey[item.key]
+    if last and (self.tNow and DiffTimers(self.tNow, last) < item.cooldown) then
+      return false
+    end
+  end
+
+  -- Compute duration if missing and it's a WAV we can parse
+  if not item.duration and item.path:lower():sub(-4) == ".wav" then
+    item.duration = wavDurationSeconds(item.path)
+  end
+  if not item.duration then
+    item.duration = self.fallbackSecs
+  end
+
+  -- Insert by priority (simple stable insertion)
+  local inserted = false
+  for i = #self.queue, 1, -1 do
+    if (self.queue[i].priority or 0) >= item.priority then
+      table.insert(self.queue, i + 1, item); inserted = true; break
+    end
+  end
+  if not inserted then table.insert(self.queue, 1, item) end
+  return true
+end
+
+function Bus:busy()
+  return self.playing or (#self.queue > 0)
+end
+
+function Bus:clear()
+  self.queue = {}
+end
+
+-- Internal
+function Bus:_startNext()
+  self.current = table.remove(self.queue, 1)
+  if not self.current then
+    self.playing = false
+    self.current = nil
+    return
+  end
+  self.playing = true
+  self.tStart = GetTimer()
+  -- Play through desired channel so mixer sliders apply.
+  -- Signature: PlaySoundFile(file, volume[, x[, y[, z[, sx[, sy[, sz[, channel]]]]]]])
+  PlaySoundFile(self.current.path, self.current.volume, nil, nil, nil, nil, nil, nil, self.current.channel)
+  if self.current.key then self.lastPlayedByKey[self.current.key] = self.tStart end
+end
+
+-- Widget lifecycle
+function widget:Initialize()
+  Bus.tNow = GetTimer()
+  WG.VoiceBus = {
+    play    = function(path, opts) return Bus:play(path, opts) end,
+    busy    = function() return Bus:busy() end,
+    clear   = function() return Bus:clear() end,
+    setDefaults = function(cfg)
+      if not cfg then return end
+      if cfg.channel then Bus.defaultChannel = cfg.channel end
+      if cfg.volume  then Bus.defaultVolume  = cfg.volume  end
+      if cfg.fallbackSecs then Bus.fallbackSecs = cfg.fallbackSecs end
+    end,
+  }
+end
+
+function widget:Shutdown()
+  if WG and WG.VoiceBus then WG.VoiceBus = nil end
+end
+
+function widget:Update()
+  Bus.tNow = GetTimer()
+  if not Bus.playing then
+    if #Bus.queue > 0 then Bus:_startNext() end
+    return
+  end
+  -- If current finished, start the next
+  if DiffTimers(Bus.tNow, Bus.tStart) >= (Bus.current.duration or Bus.fallbackSecs) then
+    Bus.playing = false
+    Bus.current = nil
+    Bus:_startNext()
+  end
+end

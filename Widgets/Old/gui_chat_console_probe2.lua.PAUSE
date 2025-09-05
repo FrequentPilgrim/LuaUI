@@ -1,0 +1,46 @@
+-- gui_chat_console_probe.lua
+--------------------------------------------------------------------------------
+-- PURPOSE:
+--  Minimal unsynced widget to prove the exact "autogroup-style" grey system
+--  messages. Zero-K formats lines prefixed with "game_message: " in the chat
+--  console like "Added Lobster to autogroup #1." (no player name).
+--
+-- HOW TO TEST:
+--  1) Save as LuaUI/Widgets/gui_chat_console_probe.lua
+--  2) In-game open: Settings > Misc > Chat
+--  3) Click "Post autogroup-style test". It also fires once on Initialize.
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+	return {
+		name    = "Chat Console Probe (game_message)",
+		desc    = "Posts system-style lines using the Zero-K 'game_message:' route.",
+		author  = "you",
+		date    = "2025-08-13",
+		license = "MIT",
+		layer   = 0,
+		enabled = true,
+	}
+end
+
+local function PostAutogroupStyle()
+	-- Use the same tag Zero-K's Auto Group widget uses:
+	Spring.Echo('game_message: Added TEST to autogroup #1.')
+	Spring.Echo('game_message: Cleared autogroup assignments.')
+end
+
+function widget:Initialize()
+	PostAutogroupStyle()
+end
+
+-- Epic Menu: one minimal button under Settings/Misc/Chat
+options_path  = "Settings/Misc/Chat"
+options_order = { "btn_system" }
+options = {
+	btn_system = {
+		name = "Post autogroup-style test",
+		desc = "Prints two grey console lines via 'game_message:' prefix.",
+		type = "button",
+		OnChange = function() PostAutogroupStyle() end,
+	},
+}

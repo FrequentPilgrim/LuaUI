@@ -1,0 +1,60 @@
+function widget:GetInfo()
+  return {
+    name      = "Countdown Start Audio",
+    desc      = "Plays once when the STARTING splash appears (ForceStart-safe).",
+    author    = "You",
+    date      = "2025-08-17",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true
+  }
+end
+
+-- ====== CONFIG ======
+local START_SOUND    = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+local START_VOL      = 1.0
+local START_CHAN     = 'ui'
+
+-- ====== STATE ======
+local played           = false
+local armedByReady     = false
+local sawTickAfterArm  = false
+
+local function playOnce()
+  if played then return end
+  if VFS.FileExists(START_SOUND) then
+    Spring.PlaySoundFile(START_SOUND, START_VOL, START_CHAN)
+    played = true
+  end
+end
+
+-- Arm when the game becomes ready to start (ForceStart or natural).
+-- Do NOT play yet; wait for the very next pregame tick (the splash frame).
+function widget:GameSetup(state, ready, playerStates)
+  if played then return end
+  if ready and not armedByReady then
+    armedByReady = true
+    sawTickAfterArm = false
+  end
+end
+
+-- Fire on the first pregame tick AFTER we were armed.
+function widget:PreGameTimekeeping(secondsUntilStart)
+  if played then return end
+  if armedByReady and not sawTickAfterArm then
+    sawTickAfterArm = true
+    playOnce()
+  end
+end
+
+-- Clean up once the match actually begins.
+function widget:GameStart()
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+-- Reset on /luaui reload etc.
+function widget:Shutdown()
+  played = false
+  armedByReady = false
+  sawTickAfterArm = false
+end

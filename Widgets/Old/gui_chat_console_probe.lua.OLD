@@ -1,0 +1,135 @@
+-- gui_chat_console_probe.lua
+--------------------------------------------------------------------------------
+-- PURPOSE:
+--  Ultra-minimal unsynced widget that proves how to print into the actual
+--  in-game CHAT feed (same stream as pause/unpause) vs. DEBUG/infolog.
+--
+-- WHERE THINGS APPEAR (tested/expected on Spring/Zero-K):
+--  * Spring.SendCommands("say ...")   -> CHAT (as if you typed it)
+--  * Spring.SendCommands("say t:...") -> CHAT (team)
+--  * Spring.SendCommands("say a:...") -> CHAT (all)
+--  * Spring.Echo("...")               -> DEBUG/INFOLOG (may mirror per config)
+--
+-- NOTE:
+--  The chat feed is driven by the engine's "say" command path. The commonly
+--  assumed helpers like Spring.SendMessageToPlayer() may not surface in the
+--  Zero-K chat console from unsynced. This probe uses only the "say" path.
+--
+-- HOW TO TEST:
+--  1) Save as LuaUI/Widgets/gui_chat_console_probe.lua
+--  2) In-game open: Settings > Misc > Chat
+--  3) Click "Run LOCAL chat test (safe)". By default this will only broadcast
+--     if you are alone (no other human players). Toggle SAFETY below to force.
+--  4) (Optional) Set BROADCAST_TEST=true to enable TEAM/ALL test button.
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+	return {
+		name    = "Chat Console Probe (Engine 'say')",
+		desc    = "Minimal buttons that print to the CHAT feed using engine chat commands.",
+		author  = "you",
+		date    = "2025-08-13",
+		license = "MIT",
+		layer   = 0,
+		enabled = true,
+	}
+end
+
+--------------------------------------------------------------------------------
+-- Config
+--------------------------------------------------------------------------------
+
+-- Avoid spamming others by default:
+local SAFETY_ONLY_IF_ALONE = true     -- if true, LOCAL test will only 'say' when you are alone
+local BROADCAST_TEST       = false    -- set to true to enable TEAM/ALL button
+
+--------------------------------------------------------------------------------
+-- Colors (Spring format: \255 r g b)
+--------------------------------------------------------------------------------
+
+local function col(r,g,b) return string.char(255, r, g, b) end
+local C_GREEN  = col(180,255,180)
+local C_YELLOW = col(255,255,180)
+local C_RED    = col(255,180,180)
+local C_GRAY   = col(200,200,200)
+
+local STR_PLAYER = C_GREEN  .. "[PLAYER] local chat (green)"
+local STR_TEAM   = C_YELLOW .. "[TEAM] team chat (yellow)"
+local STR_ALL    = C_RED    .. "[ALL] all chat (red)"
+local STR_DEBUG  = C_GRAY   .. "[DEBUG] echo (white/gray)"
+
+--------------------------------------------------------------------------------
+-- Helpers
+--------------------------------------------------------------------------------
+
+local function IsAloneHuman()
+	-- Count human (non-AI) active players
+	local list = Spring.GetPlayerList(true) or {}
+	local humans = 0
+	for i = 1, #list do
+		local _, active, isSpec, teamID, allyID, ping, cpu, country, name, rank, customKeys, isAi = Spring.GetPlayerInfo(list[i])
+		if active and not isAi then
+			humans = humans + 1
+		end
+	end
+	return humans <= 1
+end
+
+local function SayAll(msg)  Spring.SendCommands("say " .. msg) end
+local function SayTeam(msg) Spring.SendCommands("say t: " .. msg) end
+local function SayAllTag(msg) Spring.SendCommands("say a: " .. msg) end -- some UIs prefer explicit a:
+
+--------------------------------------------------------------------------------
+-- Actions
+--------------------------------------------------------------------------------
+
+local function RunLocalChatSafe()
+	-- Always show a DEBUG line so you can see the call even if blocked by safety.
+	Spring.Echo(STR_DEBUG)
+
+	if SAFETY_ONLY_IF_ALONE and not IsAloneHuman() then
+		Spring.Echo(C_GRAY .. "[SAFE] not alone → LOCAL chat test suppressed")
+		return
+	end
+
+	-- The engine's chat feed is driven by "say". This will appear in the chat console.
+	SayAll(STR_PLAYER)
+end
+
+local function RunBroadcastChat()
+	if not BROADCAST_TEST then return end
+	SayTeam(STR_TEAM)
+	SayAll(STR_ALL)
+	SayAllTag(STR_ALL) -- exercise the explicit a: route too
+end
+
+--------------------------------------------------------------------------------
+-- Menu (Epic Menu) — tiny options table, no overlays/Chili/timers
+--------------------------------------------------------------------------------
+
+options_path  = "Settings/Misc/Chat"
+options_order = { "btn_local", "btn_broadcast" }
+
+options = {
+	btn_local = {
+		name = "Run LOCAL chat test (safe)",
+		desc = "Sends a single colored line into CHAT via engine 'say'. Suppressed if not alone (see file header).",
+		type = "button",
+		OnChange = function() RunLocalChatSafe() end,
+	},
+
+	btn_broadcast = {
+		name = "Run TEAM/ALL broadcast test (disabled)",
+		desc = "No-op unless BROADCAST_TEST=true at top; then sends TEAM and ALL chat using 'say'.",
+		type = "button",
+		OnChange = function() RunBroadcastChat() end,
+	},
+}
+
+--------------------------------------------------------------------------------
+-- Fire one DEBUG line on load so you know the widget is alive (no chat spam)
+--------------------------------------------------------------------------------
+
+function widget:Initialize()
+	Spring.Echo(STR_DEBUG)
+end

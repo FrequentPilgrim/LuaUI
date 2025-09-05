@@ -1,0 +1,152 @@
+function widget:GetInfo()
+  return {
+    name      = "battle_begins_in_3_2_1 Audio Alert",
+    desc      = "Plays once at the STARTING splash: on 3 (normal) or first tick after ready=true (ForceStart). Skips spectators/replays.",
+    author    = "You",
+    date      = "2025-08-17",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Epic Menu: Settings / Audio / Audio Alerts
+--------------------------------------------------------------------------------
+
+options_path = 'Settings/Audio/Audio Alerts'
+options = {
+  countdown_start_audio_enabled = {
+    name  = "Enable: Countdown Start Audio",
+    desc  = "Play 'battle_begins_in_3_2_1.ogg' when the STARTING splash appears.",
+    type  = "bool",
+    value = true, -- default ON
+    OnChange = function(self)
+      -- Gate functionality live; do not unload the widget.
+      WG.countdown_start_audio_enabled = self.value and true or false
+    end
+  },
+}
+
+--------------------------------------------------------------------------------
+-- Config persist (so the toggle remembers its state)
+--------------------------------------------------------------------------------
+
+function widget:GetConfigData()
+  return {
+    enabled_opt = (options and options.countdown_start_audio_enabled and options.countdown_start_audio_enabled.value) ~= false,
+  }
+end
+
+function widget:SetConfigData(data)
+  local v = true
+  if type(data) == "table" and data.enabled_opt ~= nil then
+    v = data.enabled_opt and true or false
+  end
+  if options and options.countdown_start_audio_enabled then
+    options.countdown_start_audio_enabled.value = v
+  end
+  WG.countdown_start_audio_enabled = v
+end
+
+--------------------------------------------------------------------------------
+-- Core logic
+--------------------------------------------------------------------------------
+
+-- ====== CONFIG ======
+local START_SOUND = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+local START_VOL   = 3.0
+local START_CHAN  = 'ui'
+local DEBUG       = true  -- set true to print short traces
+
+-- ====== STATE ======
+local played             = false
+local armedReady         = false   -- set by GameSetup(ready=true)
+local consumedArmedTick  = false   -- ensures we only use the first tick after arming
+local lastS              = nil
+local disabledForSpecOrReplay = false
+
+-- ====== UTIL ======
+local function dbg(msg)
+  if DEBUG then Spring.Echo('game_message:[Countdown] '..msg) end
+end
+
+local function enabled()
+  return (WG.countdown_start_audio_enabled ~= false) and not disabledForSpecOrReplay
+end
+
+local function playOnce(tag)
+  if played or not enabled() then return end
+  if VFS.FileExists(START_SOUND) then
+    Spring.PlaySoundFile(START_SOUND, START_VOL, START_CHAN)
+    played = true
+    dbg('fired '..(tag or ''))
+  else
+    dbg('missing sound: '..START_SOUND)
+  end
+end
+
+-- Skip spectators and replays entirely
+function widget:Initialize()
+  local isSpec = Spring.GetSpectatingState()
+  local isReplay = Spring.IsReplay and Spring.IsReplay()
+  if isSpec or isReplay then
+    disabledForSpecOrReplay = true
+    widgetHandler:RemoveCallIn("GameSetup")
+    widgetHandler:RemoveCallIn("PreGameTimekeeping")
+    return
+  end
+  -- Ensure WG gate reflects current option value
+  if options and options.countdown_start_audio_enabled and WG.countdown_start_audio_enabled == nil then
+    WG.countdown_start_audio_enabled = options.countdown_start_audio_enabled.value and true or false
+  end
+end
+
+-- Arm on local ready; we won't play yet. (Works in online lobbies with bots and MP.)
+function widget:GameSetup(state, ready, playerStates)
+  if played or not enabled() then return end
+  if ready and not armedReady then
+    armedReady = true
+    consumedArmedTick = false
+    dbg('armed (local ready)')
+  end
+end
+
+-- Unified trigger:
+--  A) ForceStart / quick start: if armed, fire on the **first** pregame tick after arming (any value).
+--  B) Normal countdown: fire exactly on the transition into 3 (…>3 -> 3).
+function widget:PreGameTimekeeping(secondsUntilStart)
+  if played or not enabled() then return end
+  local s = math.floor((secondsUntilStart or 9999) + 0.0001)
+
+  -- A) First tick after arming -> fire now
+  if armedReady and not consumedArmedTick then
+    consumedArmedTick = true
+    dbg('first tick after ready: '..tostring(s))
+    playOnce('(armed→first-tick)')
+    lastS = s
+    return
+  end
+
+  -- B) Exact-on-3 for natural countdowns
+  if s == 3 and (lastS == nil or lastS > 3) then
+    playOnce('(hit-3)')
+    lastS = s
+    return
+  end
+
+  lastS = s
+end
+
+-- Clean up when match actually begins
+function widget:GameStart()
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+-- Reset on reloads
+function widget:Shutdown()
+  played = false
+  armedReady = false
+  consumedArmedTick = false
+  lastS = nil
+end

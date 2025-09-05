@@ -1,0 +1,98 @@
+function widget:GetInfo()
+  return {
+    name    = "DBG Morph Signal Sniffer",
+    desc    = "Logs the exact events/params that fire when a commander morph completes.",
+    author  = "You",
+    date    = "2025-08-16",
+    license = "GNU GPL v2",
+    layer   = 100000,
+    enabled = true,
+  }
+end
+
+local spGetMyTeamID        = Spring.GetMyTeamID
+local spGetAllUnits        = Spring.GetAllUnits
+local spGetUnitTeam        = Spring.GetUnitTeam
+local spGetUnitDefID       = Spring.GetUnitDefID
+local spGetUnitRulesParam  = Spring.GetUnitRulesParam
+local spGetGameFrame       = Spring.GetGameFrame
+local UnitDefs             = UnitDefs
+
+-- Heuristic commander check (same style as your working widget)
+local function IsCommander(uid, udid)
+  local ud = UnitDefs[udid]; if not ud then return false end
+  local name  = ud.name or ""
+  local isCmd = spGetUnitRulesParam(uid, "iscommander")
+  local comm  = spGetUnitRulesParam(uid, "commtype")
+  local lvl   = spGetUnitRulesParam(uid, "level")
+  if isCmd == 1 then return true end
+  if comm or (lvl and lvl > 0) then return true end
+  if name:find("^dyn") or name:find("^zk_") or name:find("^comm") or name:find("_base") then return true end
+  return false
+end
+
+local myTeam
+local tracked = {}  -- uid -> last {morph, morph_progress, morph_target}
+
+local function indexExisting()
+  tracked = {}
+  myTeam = spGetMyTeamID()
+  for _, u in ipairs(spGetAllUnits()) do
+    if spGetUnitTeam(u) == myTeam then
+      local ud = spGetUnitDefID(u)
+      if ud and IsCommander(u, ud) then
+        tracked[u] = {morph=nil, morph_progress=nil, morph_target=nil}
+      end
+    end
+  end
+end
+
+function widget:Initialize()
+  indexExisting()
+  Spring.Echo("game_message: [Sniffer] Ready. Start a commander morph to capture signals.")
+end
+
+function widget:PlayerChanged()
+  indexExisting()
+end
+
+-- Poll a few common params; log any changes
+local NEXT = 0
+local PERIOD = 5
+function widget:GameFrame(n)
+  if n < NEXT then return end
+  NEXT = n + PERIOD
+  for uid, last in pairs(tracked) do
+    local m  = spGetUnitRulesParam(uid, "morph")
+    local mp = spGetUnitRulesParam(uid, "morph_progress")
+    local mt = spGetUnitRulesParam(uid, "morph_target")
+    if m ~= last.morph or mp ~= last.morph_progress or mt ~= last.morph_target then
+      Spring.Echo(("game_message: [Sniffer] uid=%d morph=%s mp=%.3f mt=%s gf=%d")
+        :format(uid, tostring(m), tonumber(mp or -1), tostring(mt), spGetGameFrame()))
+      last.morph, last.morph_progress, last.morph_target = m, mp, mt
+    end
+  end
+end
+
+-- See if any gadget sends an explicit morph-finished LuaMsg (common pattern)
+function widget:RecvLuaMsg(msg, playerID)
+  if type(msg) == "string" and msg:lower():find("morph") then
+    Spring.Echo("game_message: [Sniffer] RecvLuaMsg: "..msg)
+  end
+end
+
+-- Track new/removed commanders (in case morph prefab uses create/destroy)
+function widget:UnitCreated(uid, udid, team)
+  if team ~= myTeam then return end
+  if IsCommander(uid, udid) and not tracked[uid] then
+    tracked[uid] = {morph=nil, morph_progress=nil, morph_target=nil}
+    Spring.Echo(("game_message: [Sniffer] Commander created uid=%d"):format(uid))
+  end
+end
+function widget:UnitDestroyed(uid, udid, team)
+  if team ~= myTeam then return end
+  if tracked[uid] then
+    Spring.Echo(("game_message: [Sniffer] Commander destroyed uid=%d gf=%d"):format(uid, spGetGameFrame()))
+    tracked[uid] = nil
+  end
+end

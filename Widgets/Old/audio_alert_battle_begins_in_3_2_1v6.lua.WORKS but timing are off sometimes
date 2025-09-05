@@ -1,0 +1,169 @@
+--------------------------------------------------------------------------------
+-- battle_begins_in_3_2_1 Audio Alert (Starting in 2 + Menu Enable + Verbose)
+-- Triggers:
+--   • Immediately when local PlayerReady becomes true (GameSetup ready=true)
+--   • At GameSetup state == "Starting in 2"
+--   • Fallback if PreGameTimekeeping hits 0
+-- Spec/replay gate unchanged. One checkbox in Settings/Audio/Audio Alerts controls functionality.
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name      = "battle_begins_in_3_2_1 Audio Alert",
+    desc      = "Plays once at start: PlayerReady immediate or GameSetup 'Starting in 2'. Optional debug breadcrumbs.",
+    author    = "You",
+    date      = "2025-08-20",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Config
+--------------------------------------------------------------------------------
+local START_SOUND      = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+local RUN_IN_SPECTATOR = false        -- keep your prior behavior
+local VERBOSE          = true         -- flip to false to silence all debug prints
+
+--------------------------------------------------------------------------------
+-- Epic Menu (single enable/disable checkbox)
+--------------------------------------------------------------------------------
+options_path = 'Settings/Audio/Audio Alerts'
+options = {
+  enable_begins_alert = {
+    name  = "Battle Begins (Starting in 2) Alert",
+    type  = "bool",
+    value = true,   -- checked by default
+  },
+}
+
+--------------------------------------------------------------------------------
+-- Locals
+--------------------------------------------------------------------------------
+local PlaySoundFile        = Spring.PlaySoundFile
+local GetSpectatingState   = Spring.GetSpectatingState
+local GetGameSeconds       = Spring.GetGameSeconds
+local GetPlayerInfo        = Spring.GetPlayerInfo
+local Echo                 = Spring.Echo
+
+local played         = false   -- sound plays only once
+local lastLocalReady = nil     -- previous local ready value
+local lastSeenReady  = {}      -- others' ready states (debug)
+
+local function gm(s)  if VERBOSE then Echo('game_message: '..s) end end
+local function dbg(s) if VERBOSE then Echo('game_message: [begins321] '..s) end end
+
+local function feature_enabled()
+  return not options or not options.enable_begins_alert or options.enable_begins_alert.value
+end
+
+local function spec_gate_ok()
+  if RUN_IN_SPECTATOR then return true end
+  local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+  return not (isSpec or isReplay)
+end
+
+local function can_fire_now()
+  return feature_enabled() and spec_gate_ok()
+end
+
+local function playOnce(tag)
+  if played then return end
+  if not can_fire_now() then
+    dbg(("blocked at fire time (tag=%s) feature=%s spec_ok=%s"):format(
+      tostring(tag), tostring(feature_enabled()), tostring(spec_gate_ok())))
+    return
+  end
+  played = true
+  PlaySoundFile(START_SOUND, 1.0, "ui")
+  gm(("Battle begins: %s → audio played"):format(tag or ""))
+  dbg(("PLAY tag=%s t=%.2fs"):format(tag or "", GetGameSeconds() or 0))
+end
+
+--------------------------------------------------------------------------------
+-- Call-ins
+--------------------------------------------------------------------------------
+
+-- Immediate on local PlayerReady; also logs ready transitions (self + others).
+function widget:GameSetup(state, ready, playerStates)
+  if VERBOSE then
+    dbg(("GameSetup: state=%s ready=%s"):format(tostring(state), tostring(ready)))
+  end
+
+  -- Local ready transition debug
+  if lastLocalReady ~= ready then
+    lastLocalReady = ready
+    gm(("Local PlayerReady → %s @ %.2fs"):format(tostring(ready), GetGameSeconds() or 0))
+  end
+
+  -- Fire immediately when local ready flips true
+  if ready and not played then
+    playOnce('PlayerReady immediate')
+  end
+
+  -- Your chosen boundary: treat "Starting in 2" as the start cue
+  if (not played) and type(state) == "string" and state:match("^Starting in%s*2") then
+    playOnce('GameSetup Starting in 2')
+  end
+
+  -- Other players' ready (debug only; gated by VERBOSE)
+  if VERBOSE and type(playerStates) == 'table' then
+    for pid, info in pairs(playerStates) do
+      local isR = info
+      if type(info) == 'table' then isR = info.ready or info[1] end
+      isR = not not isR
+      if lastSeenReady[pid] ~= isR then
+        if isR then
+          local name = select(1, GetPlayerInfo(pid)) or ("player#"..tostring(pid))
+          gm(("PlayerReady: %s → true @ %.2fs"):format(name, GetGameSeconds() or 0))
+        end
+        lastSeenReady[pid] = isR
+      end
+    end
+  end
+end
+
+-- Fallback: some builds report countdown via this call-in; fire if it hits 0.
+function widget:PreGameTimekeeping(val)
+  if VERBOSE then dbg("PGTK raw="..tostring(val)) end
+  if played or not can_fire_now() then return end
+
+  local v = val
+  if type(v) == "string" then v = tonumber(v) end
+  if type(v) ~= "number" then
+    if VERBOSE then dbg("PGTK non-numeric; ignoring") end
+    return
+  end
+  v = math.floor(v)
+  if VERBOSE then dbg("PGTK v="..v) end
+
+  if v == 0 then
+    playOnce('PGTK==0 (fallback)')
+  end
+end
+
+function widget:GameStart()
+  if VERBOSE then dbg("GameStart") end
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+function widget:Initialize()
+  if VERBOSE then dbg("Initialize") end
+  if not VFS.FileExists(START_SOUND) then
+    gm("battle_begins_in_3_2_1: sound file not found at "..START_SOUND)
+  end
+  if VERBOSE then
+    local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+    dbg(("Initial gate: isSpec=%s isReplay=%s RUN_IN_SPECTATOR=%s enabled=%s VERBOSE=%s"):format(
+      tostring(isSpec), tostring(isReplay), tostring(RUN_IN_SPECTATOR),
+      tostring(feature_enabled()), tostring(VERBOSE)))
+  end
+end
+
+function widget:Shutdown()
+  if VERBOSE then dbg("Shutdown") end
+  played = false
+  lastLocalReady = nil
+  lastSeenReady = {}
+end

@@ -1,0 +1,158 @@
+--------------------------------------------------------------------------------
+-- Battle Begins Countdown (3 → 0) — per-step audio cues aligned to GameSetup
+-- Plays one sound for each "Starting in N" tick the moment that line is logged.
+-- Primary source: GameSetup(state="Starting in N"); Fallback: PreGameTimekeeping.
+-- Epic Menu: Settings / Audio / Audio Alerts
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name      = "Battle Begins Countdown (3→0) Audio Alerts",
+    desc      = "Plays battle_begins_in.ogg (3), three.ogg (2), two.ogg (1), one.ogg (0) exactly on the countdown ticks.",
+    author    = "You",
+    date      = "2025-08-22",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true,
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Config
+--------------------------------------------------------------------------------
+local SND_DIR = "LuaUI/Sounds/"
+local SOUNDS = {
+  [3] = SND_DIR .. "battle_begins_in.ogg",
+  [2] = SND_DIR .. "three.ogg",
+  [1] = SND_DIR .. "two.ogg",
+  [0] = SND_DIR .. "one.ogg",
+}
+
+-- Gate behavior
+local RUN_IN_SPECTATOR = false  -- set true if you want it in spec/replay
+
+--------------------------------------------------------------------------------
+-- Epic Menu
+--------------------------------------------------------------------------------
+options_path = "Settings/Audio/Audio Alerts"
+options = {
+  begins_countdown_enable = {
+    name  = "Battle Begins Countdown (3→0)",
+    type  = "bool",
+    value = true,
+  },
+  begins_countdown_verbose = {
+    name  = "Verbose debug for Countdown",
+    type  = "bool",
+    value = true,
+  },
+}
+
+--------------------------------------------------------------------------------
+-- Locals
+--------------------------------------------------------------------------------
+local Echo               = Spring.Echo
+local PlaySoundFile      = Spring.PlaySoundFile
+local GetSpectatingState = Spring.GetSpectatingState
+local GetGameSeconds     = Spring.GetGameSeconds
+
+local playedStep = { }   -- [3]=true when 3 fired, etc.
+
+local function feature_enabled()
+  return (not options or not options.begins_countdown_enable or options.begins_countdown_enable.value)
+end
+
+local function verbose()
+  return (options and options.begins_countdown_verbose and options.begins_countdown_verbose.value) or false
+end
+
+local function spec_gate_ok()
+  if RUN_IN_SPECTATOR then return true end
+  local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+  return not (isSpec or isReplay)
+end
+
+local function gm(s)  if verbose() then Echo("game_message: "..s) end end
+local function dbg(s) if verbose() then Echo("game_message: [begins321] "..s) end end
+
+local function play_step(step, tag)
+  if playedStep[step] then return end
+  if not feature_enabled() then return end
+  if not spec_gate_ok() then return end
+
+  local path = SOUNDS[step]
+  if not path then return end
+
+  -- Log exactly when we fire, then play
+  dbg(("PLAY step=%d (%s) t=%.2fs"):format(step, tag or "?", GetGameSeconds() or 0))
+  if VFS.FileExists(path) then
+    PlaySoundFile(path, 1.0, "ui")
+  else
+    gm(("Missing sound file: %s"):format(path))
+  end
+  playedStep[step] = true
+end
+
+local function maybe_parse_step_from_state(state)
+  if type(state) ~= "string" then return nil end
+  local s = state:lower()
+  local n = s:match("starting%s+in%s+(%d+)")
+  if n then
+    local k = tonumber(n)
+    if k and SOUNDS[k] then return k end
+  end
+  return nil
+end
+
+--------------------------------------------------------------------------------
+-- Call-ins
+--------------------------------------------------------------------------------
+
+function widget:GameSetup(state, ready)
+  -- Mirror your breadcrumb line so timing matches exactly with sound fire
+  dbg(("GameSetup: state=%s ready=%s"):format(tostring(state), tostring(ready)))
+  local step = maybe_parse_step_from_state(state)
+  if step ~= nil then
+    play_step(step, "GameSetup Starting in "..step)
+  end
+end
+
+-- Fallback path: some builds also tick here; we de-dup via playedStep[]
+function widget:PreGameTimekeeping(val)
+  dbg("PGTK raw="..tostring(val))
+  local v = val
+  if type(v) == "string" then v = tonumber(v) end
+  if type(v) ~= "number" then return end
+  v = math.floor(v)
+  if SOUNDS[v] then
+    dbg("PGTK v="..v)
+    play_step(v, "PGTK=="..v)
+  end
+end
+
+function widget:GameStart()
+  dbg("GameStart")
+  -- We’re done once the match begins; no more fallbacks needed.
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+function widget:Initialize()
+  dbg("Initialize")
+  if verbose() then
+    local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+    dbg(("Initial gate: isSpec=%s isReplay=%s RUN_IN_SPECTATOR=%s enabled=%s verbose=%s"):format(
+      tostring(isSpec), tostring(isReplay), tostring(RUN_IN_SPECTATOR),
+      tostring(feature_enabled()), tostring(verbose())))
+  end
+  -- Warn about missing assets once
+  for step, path in pairs(SOUNDS) do
+    if not VFS.FileExists(path) then
+      gm(("Countdown %d: sound not found at %s"):format(step, path))
+    end
+  end
+end
+
+function widget:Shutdown()
+  dbg("Shutdown")
+  playedStep = {}
+end

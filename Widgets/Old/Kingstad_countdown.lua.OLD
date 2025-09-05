@@ -1,0 +1,67 @@
+function widget:GetInfo()
+	return {
+		name      = "Countdown",
+		desc      = "Plays a sound exactly when the on-screen STARTING splash appears.",
+		author    = "Kingstad",
+		date      = "2025-02-24",
+		license   = "Do with it as you please.",
+		layer     = -100,   -- pregame-safe
+		enabled   = true
+	}
+end
+
+-- ====== CONFIG ======
+local START_SOUND = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'  -- your file
+local START_SOUND_VOL = 1.0
+local START_SOUND_CHAN = 'ui'
+
+-- optional: if you later want beeps at 2/1/0, set to true and set TICK_SOUND
+local ENABLE_TICK_BEEPS = false
+local TICK_SOUND = 'LuaUI/Sounds/tick.wav'
+local TICK_VOL = 0.9
+
+-- ====== STATE ======
+local havePlayedStart = false
+local lastWholeSecond = nil
+
+-- Plays safely if file exists
+local function PlaySafe(path, vol, chan)
+	if VFS.FileExists(path) then
+		Spring.PlaySoundFile(path, vol or 1.0, chan or 'ui')
+	else
+		-- keep silent in-game; uncomment if you want a log:
+		-- Spring.Echo("[Countdown] Missing sound: " .. tostring(path))
+	end
+end
+
+-- This callin is fed during the pregame countdown.
+-- We trigger exactly once at the STARTING splash (same moment the UI countdown begins).
+function widget:PreGameTimekeeping(secondsUntilStart)
+	-- secondsUntilStart is typically 3,2,1,0 … we only want the first moment it hits 3.
+	-- Guard against repeats / float jitter by flooring.
+	local s = math.floor(secondsUntilStart or -1)
+
+	if lastWholeSecond ~= s then
+		lastWholeSecond = s
+
+		-- Fire once at the moment the STARTING card appears
+		if (s == 3) and not havePlayedStart then
+			PlaySafe(START_SOUND, START_SOUND_VOL, START_SOUND_CHAN)
+			havePlayedStart = true
+		elseif ENABLE_TICK_BEEPS and (s == 2 or s == 1 or s == 0) then
+			PlaySafe(TICK_SOUND, TICK_VOL, START_SOUND_CHAN)
+		end
+	end
+end
+
+-- If a game actually starts (not aborted), hard-stop any further behavior.
+function widget:GameStart()
+	-- Nothing to do, but we ensure no further pregame logic
+	widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+-- Reset between games/reloads
+function widget:Shutdown()
+	havePlayedStart = false
+	lastWholeSecond = nil
+end

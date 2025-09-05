@@ -1,0 +1,139 @@
+--------------------------------------------------------------------------------
+-- battle_begins_in_3_2_1 Audio Alert
+-- Minimal changes:
+--   • Play immediately when local PlayerReady becomes true (GameSetup)
+--   • Play at countdown edge 1 → 0 (PreGameTimekeeping)
+-- Added debug:
+--   • System-style messages whenever local ready changes
+--   • System-style messages when any other player's ready flips true
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name      = "battle_begins_in_3_2_1 Audio Alert",
+    desc      = "Plays once at start: on local PlayerReady, or at countdown 1→0. Prints ready-change debug.",
+    author    = "FrequentPilgrim",
+    date      = "2025-08-20",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Config (keep your existing sound asset name/path)
+--------------------------------------------------------------------------------
+local START_SOUND = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+
+-- If you want this to also run when spectating/replaying, flip this to true.
+local RUN_IN_SPECTATOR = false
+
+--------------------------------------------------------------------------------
+-- Locals
+--------------------------------------------------------------------------------
+local PlaySoundFile        = Spring.PlaySoundFile
+local GetSpectatingState   = Spring.GetSpectatingState
+local GetGameSeconds       = Spring.GetGameSeconds
+local GetPlayerInfo        = Spring.GetPlayerInfo
+local Echo                 = Spring.Echo
+
+local played        = false   -- hard debounce: sound plays only once
+local lastCountdown = nil     -- previous countdown integer for 1→0 edge detect
+local lastLocalReady = nil    -- previous local ready value (nil→false/true)
+local lastSeenReady = {}      -- map of playerID -> last ready bool (for others)
+
+local function game_message(s) Echo('game_message: '..s) end
+
+local function enabled_now()
+  if RUN_IN_SPECTATOR then return true end
+  local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+  return not (isSpec or isReplay)
+end
+
+local function playOnce(tag)
+  if played then return end
+  if not enabled_now() then return end
+  played = true
+  PlaySoundFile(START_SOUND, 3.0, "ui")
+  game_message(("Battle begins: %s → audio played"):format(tag or ""))
+end
+
+--------------------------------------------------------------------------------
+-- Call-ins
+--------------------------------------------------------------------------------
+
+-- Change #1: Fire immediately when local PlayerReady becomes true.
+-- Also emit debug messages whenever the local ready value changes (true/false).
+--
+-- NOTE: GameSetup(state, ready, playerStates)
+--   - 'ready' is the local player's ready flag.
+--   - 'playerStates' (table) may contain readiness for others, keyed by playerID.
+function widget:GameSetup(state, ready, playerStates)
+  -- Debug local ready transitions
+  if lastLocalReady ~= ready then
+    lastLocalReady = ready
+    game_message(("Local PlayerReady → %s @ %.2fs"):format(tostring(ready), GetGameSeconds() or 0))
+  end
+
+  -- Fire immediately when local ready turns true
+  if ready and not played then
+    playOnce('PlayerReady immediate')
+  end
+
+  -- Debug: report any other player whose ready flips to true
+  if type(playerStates) == 'table' then
+    for pid, info in pairs(playerStates) do
+      -- 'info' can be a boolean or a small table; handle both safely
+      local isR = info
+      if type(info) == 'table' then isR = info.ready or info[1] end
+      isR = not not isR
+
+      if lastSeenReady[pid] ~= isR then
+        -- state changed
+        if isR then
+          local name = select(1, GetPlayerInfo(pid)) or ("player#"..tostring(pid))
+          game_message(("PlayerReady: %s → true @ %.2fs"):format(name, GetGameSeconds() or 0))
+        end
+        lastSeenReady[pid] = isR
+      end
+    end
+  end
+end
+
+-- Change #2: Fire at the exact countdown edge where 1 ticks down to 0.
+-- This replaces any prior behavior that triggered at 3.
+function widget:PreGameTimekeeping(val)
+  if played then return end
+  if not enabled_now() then return end
+
+  local v = val
+  if type(v) == "string" then v = tonumber(v) end
+  if type(v) ~= "number" then return end
+
+  v = math.floor(v)
+
+  -- Detect the edge transition 1 → 0
+  if lastCountdown == 1 and v == 0 then
+    playOnce('countdown 1→0')
+  end
+
+  lastCountdown = v
+end
+
+-- Optional cleanup once the game has started; avoids any late pregame ticks.
+function widget:GameStart()
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+function widget:Initialize()
+  if not VFS.FileExists(START_SOUND) then
+    game_message("battle_begins_in_3_2_1: sound file not found at "..START_SOUND)
+  end
+end
+
+function widget:Shutdown()
+  played = false
+  lastCountdown = nil
+  lastLocalReady = nil
+  lastSeenReady = {}
+end

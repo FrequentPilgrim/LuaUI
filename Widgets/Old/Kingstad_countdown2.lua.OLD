@@ -1,0 +1,68 @@
+function widget:GetInfo()
+	return {
+		name      = "Countdown",
+		desc      = "Plays once as soon as the STARTING splash appears (robust to ForceStart).",
+		author    = "Kingstad",
+		date      = "2025-02-24",
+		license   = "Do with it as you please.",
+		layer     = -100,
+		enabled   = true
+	}
+end
+
+-- ====== CONFIG ======
+local START_SOUND      = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+local START_VOL        = 1.0
+local START_CHAN       = 'ui'
+
+-- ====== STATE ======
+local played = false
+local armingFromGameSetup = false
+
+local function PlaySafe(path, vol, chan)
+	if VFS.FileExists(path) then
+		Spring.PlaySoundFile(path, vol or 1.0, chan or 'ui')
+		-- Spring.Echo('game_message: [Countdown] Start cue played') -- uncomment to verify in chat-style feed
+	end
+end
+
+-- Fired every pregame tick by the pregame gadget.
+-- ForceStart can compress or skip exact integer seconds; we don't care.
+function widget:PreGameTimekeeping(secondsUntilStart)
+	if not played then
+		PlaySafe(START_SOUND, START_VOL, START_CHAN)
+		played = true
+	end
+	-- (Optional) If you ever want per-second beeps, you can add them here,
+	-- but keep the one-shot above so ForceStart never skips your clip.
+end
+
+-- Backup: if the engine/lobby flips into the ready-to-start state and
+-- (for whatever reason) the timekeeping tick is ultra-short, arm the play
+-- on the very next Update to align with the splash.
+function widget:GameSetup(state, ready, playerStates)
+	-- state is typically "ready". We don't need to change anything the UI shows;
+	-- we just arm a next-frame play if nothing has fired yet.
+	if not played and ready then
+		armingFromGameSetup = true
+	end
+end
+
+function widget:Update()
+	if armingFromGameSetup and not played then
+		PlaySafe(START_SOUND, START_VOL, START_CHAN)
+		played = true
+		armingFromGameSetup = false
+	end
+end
+
+function widget:GameStart()
+	-- Once the match actually starts, kill any further pregame hooks.
+	widgetHandler:RemoveCallIn("PreGameTimekeeping")
+	armingFromGameSetup = false
+end
+
+function widget:Shutdown()
+	played = false
+	armingFromGameSetup = false
+end

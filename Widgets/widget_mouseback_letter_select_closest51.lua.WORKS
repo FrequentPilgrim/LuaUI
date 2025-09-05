@@ -1,0 +1,356 @@
+function widget:GetInfo()
+    return {
+        name    = "Single Unit Selector",
+        desc    = "Selects nearest unit(s) in a letter group using Mouse Back + Key combos",
+        author  = "FrequentPilgrim",
+        date    = "2025-06-13",
+        license = "GNU GPL v2",
+        layer   = 0,
+        enabled = true,
+    }
+end
+
+------------------------------------------------------------
+-- Locals (original behavior preserved)
+------------------------------------------------------------
+local Spring = Spring
+local gl     = gl
+local GL     = GL
+local CMD    = CMD
+local math   = math
+
+local MOUSE_BACK_BUTTON = 4
+local mouseBackHeld = false
+local selectedUnitsThisCycle = {}
+local lastSelectedUnitPositions = {}
+local drawTimer = 0
+local shiftHeld = false
+local ctrlHeld = false
+local hasClearedSelectionThisCycle = false
+
+-- Sparkle animation state (visual-only)
+local sparklePhase = 0       -- rotation/twinkle
+local huePhase     = 0       -- hue 0..1
+
+-- Keycode mapping
+local keycodeToLetter = {}
+for i = 65, 90 do -- A..Z
+    local ch = string.char(i)
+    keycodeToLetter[Spring.GetKeyCode(ch:lower())] = ch
+end
+
+------------------------------------------------------------
+-- Epic Menu Options (add-only)
+-- Settings/Misc/Single Unit Selector
+------------------------------------------------------------
+options_order = options_order or {}
+options = options or {}
+
+local OPT_PATH = "Settings/Misc/Single Unit Selector"
+
+local function _append_order(key)
+    for i = 1, #options_order do
+        if options_order[i] == key then return end
+    end
+    options_order[#options_order + 1] = key
+end
+
+-- Master enable gate (default ON to preserve behavior)
+if not options.enabled then
+    options.enabled = {
+        name  = "Enable",
+        type  = "bool",
+        value = true,  -- default preserves current behavior
+        path  = OPT_PATH,
+        desc  = "Enable or disable this widget’s functionality.",
+        OnChange = function(self)
+            if self.value == false then
+                -- Reset transient state when disabling
+                mouseBackHeld = false
+                selectedUnitsThisCycle = {}
+                lastSelectedUnitPositions = {}
+                drawTimer = 0
+                hasClearedSelectionThisCycle = false
+            end
+        end,
+    }
+    _append_order("enabled")
+end
+
+-- Cursor sparkle while holding Mouse Back (default ON)
+if not options.sparkleIndicator then
+    options.sparkleIndicator = {
+        name  = "Show Mouse Sparkle (held Back)",
+        type  = "bool",
+        value = true, -- default ON
+        path  = OPT_PATH,
+        desc  = "Draw a sparkling indicator under the cursor while holding the Back mouse button.",
+    }
+    _append_order("sparkleIndicator")
+end
+
+-- NEW: Sparkle size slider (pixels) — default 18px (current behavior)
+if not options.sparkleSize then
+    options.sparkleSize = {
+        name   = "Sparkle Size (px)",
+        type   = "number",
+        min    = 6,
+        max    = 64,
+        step   = 1,
+        value  = 18, -- matches current 3× size (no visual change by default)
+        path   = OPT_PATH,
+        desc   = "Radius in screen pixels of the sparkle indicator.",
+        -- live-read in DrawScreen; no OnChange needed
+    }
+    _append_order("sparkleSize")
+end
+
+local function Enabled()
+    return (options and options.enabled and options.enabled.value) ~= false
+end
+
+local function SparkleRadius()
+    local r = (options.sparkleSize and options.sparkleSize.value) or 18
+    if r < 1 then r = 1 end
+    return r
+end
+
+-- Persist only option values
+function widget:GetConfigData()
+    return {
+        enabled          = (options.enabled and options.enabled.value) ~= false,
+        sparkleIndicator = (options.sparkleIndicator and options.sparkleIndicator.value) == true,
+        sparkleSize      = (options.sparkleSize and options.sparkleSize.value) or 18,
+    }
+end
+
+function widget:SetConfigData(data)
+    if type(data) == "table" then
+        if options.enabled and data.enabled ~= nil then
+            options.enabled.value = data.enabled and true or false
+        end
+        if options.sparkleIndicator and data.sparkleIndicator ~= nil then
+            options.sparkleIndicator.value = data.sparkleIndicator and true or false
+        end
+        if options.sparkleSize and data.sparkleSize ~= nil then
+            local v = tonumber(data.sparkleSize) or 18
+            if v < options.sparkleSize.min then v = options.sparkleSize.min end
+            if v > options.sparkleSize.max then v = options.sparkleSize.max end
+            options.sparkleSize.value = v
+        end
+    end
+end
+
+------------------------------------------------------------
+-- Original Logic (unchanged; only gated by Enabled())
+------------------------------------------------------------
+function widget:MousePress(x, y, button)
+    if not Enabled() then return false end
+    if button == MOUSE_BACK_BUTTON then
+        mouseBackHeld = true
+        selectedUnitsThisCycle = {}
+        hasClearedSelectionThisCycle = false
+        return true
+    else
+        -- If Back was held but another mouse button is clicked, reset immediately
+        if mouseBackHeld then
+            mouseBackHeld = false
+            selectedUnitsThisCycle = {}
+            hasClearedSelectionThisCycle = false
+        end
+    end
+    return false
+end
+
+function widget:MouseRelease(x, y, button)
+    if not Enabled() then return false end
+    if button == MOUSE_BACK_BUTTON then
+        mouseBackHeld = false
+        selectedUnitsThisCycle = {}
+        hasClearedSelectionThisCycle = false
+        return true
+    end
+    return false
+end
+
+function widget:KeyPress(key, mods, isRepeat)
+    if not Enabled() then return false end
+    if not mouseBackHeld then return false end
+
+    local letter = keycodeToLetter[key]
+    if not letter then return false end
+
+    local groupTable = WG.LetterUnitTypeMultiAutoGroups
+    if not groupTable then
+        Spring.Echo("[Selector] WG.LetterUnitTypeMultiAutoGroups is missing.")
+        return false
+    end
+
+    local defNames = groupTable[letter]
+    if not defNames then
+        Spring.Echo("[Selector] No units assigned to letter group:", letter)
+        return true
+    end
+
+    shiftHeld = mods.shift
+    ctrlHeld  = mods.ctrl
+
+    local mx, my = Spring.GetMouseState()
+    local type, pos = Spring.TraceScreenRay(mx, my, true)
+    if type ~= "ground" or not pos then
+        Spring.Echo("[Selector] Mouse not over ground.")
+        return true
+    end
+
+    local allUnits = Spring.GetAllUnits()
+    local myTeam   = Spring.GetMyTeamID()
+    local cx, cy, cz = pos[1], pos[2], pos[3]
+    local candidates = {}
+
+    for _, unitID in ipairs(allUnits) do
+        if Spring.GetUnitTeam(unitID) == myTeam then
+            local udid = Spring.GetUnitDefID(unitID)
+            if udid then
+                local defName = UnitDefs[udid].name
+                if defNames[defName] then
+                    if not selectedUnitsThisCycle[unitID] and (not shiftHeld or not Spring.IsUnitSelected(unitID)) then
+                        local isIdle = (#Spring.GetUnitCommands(unitID, 1) == 0)
+                        if not ctrlHeld or isIdle then
+                            local ux, uy, uz = Spring.GetUnitPosition(unitID)
+                            local distSq = (ux - cx)^2 + (uz - cz)^2
+                            candidates[#candidates + 1] = { id = unitID, dist = distSq, pos = { ux, uy, uz } }
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+
+    local unitsToSelect = {}
+    local newlySelectedPositions = {}
+    local numToSelect = 1
+
+    for i = 1, math.min(numToSelect, #candidates) do
+        local candidate = candidates[i]
+        unitsToSelect[#unitsToSelect + 1] = candidate.id
+        newlySelectedPositions[#newlySelectedPositions + 1] = candidate.pos
+        selectedUnitsThisCycle[candidate.id] = true
+
+        if ctrlHeld then
+            Spring.GiveOrderToUnit(candidate.id, CMD.MOVE, { cx, cy, cz }, {})
+        end
+    end
+
+    if #unitsToSelect > 0 then
+        if shiftHeld then
+            Spring.SelectUnitArray(unitsToSelect, true)
+        else
+            if not hasClearedSelectionThisCycle then
+                Spring.SelectUnitArray(unitsToSelect, false)
+                hasClearedSelectionThisCycle = true
+            else
+                Spring.SelectUnitArray(unitsToSelect, true)
+            end
+        end
+
+        lastSelectedUnitPositions = newlySelectedPositions
+        drawTimer = 20
+    else
+        lastSelectedUnitPositions = {}
+        drawTimer = 0
+    end
+
+    return true
+end
+
+-- Existing world-space feedback lines (unchanged)
+function widget:DrawWorld()
+    if not Enabled() then return end
+    if drawTimer > 0 and #lastSelectedUnitPositions > 0 then
+        local mx, my = Spring.GetMouseState()
+        local type, pos = Spring.TraceScreenRay(mx, my, true)
+        if type == "ground" and pos then
+            local cx, cy, cz = pos[1], pos[2], pos[3]
+            local r, g, b = 0.6, 0.8, 1 -- Default light blue
+            if shiftHeld then
+                r, g, b = 0, 1, 0 -- Green for Shift
+            elseif ctrlHeld then
+                r, g, b = 1, 0, 0 -- Red for Ctrl
+            end
+
+            gl.Color(r, g, b, drawTimer / 20)
+            gl.LineWidth(3)
+            gl.BeginEnd(GL.LINES, function()
+                for _, unitPos in ipairs(lastSelectedUnitPositions) do
+                    gl.Vertex(cx, cy + 10, cz)
+                    gl.Vertex(unitPos[1], unitPos[2] + 10, unitPos[3])
+                end
+            end)
+            gl.LineWidth(1)
+            gl.Color(1, 1, 1, 1)
+        end
+        drawTimer = drawTimer - 1
+    end
+end
+
+------------------------------------------------------------
+-- Rainbow sparkle indicator (screen-space only)
+------------------------------------------------------------
+
+-- HSV->RGB helper for smooth rainbow cycling
+local function hsv2rgb(h, s, v)
+    -- h in [0,1), s in [0,1], v in [0,1]
+    local i = math.floor(h * 6)
+    local f = h * 6 - i
+    local p = v * (1 - s)
+    local q = v * (1 - f * s)
+    local t = v * (1 - (1 - f) * s)
+    i = i % 6
+    if i == 0 then return v, t, p
+    elseif i == 1 then return q, v, p
+    elseif i == 2 then return p, v, t
+    elseif i == 3 then return p, q, v
+    elseif i == 4 then return t, p, v
+    else return v, p, q end
+end
+
+function widget:Update(dt)
+    if not Enabled() then return end
+    if mouseBackHeld and options.sparkleIndicator and options.sparkleIndicator.value then
+        sparklePhase = (sparklePhase + dt * 6.0) % (2 * math.pi)
+        huePhase     = (huePhase + dt * 0.15) % 1.0 -- slow hue cycle
+    end
+end
+
+function widget:DrawScreen()
+    if not Enabled() then return end
+    if not (mouseBackHeld and options.sparkleIndicator and options.sparkleIndicator.value) then return end
+
+    local mx, my = Spring.GetMouseState()
+    if not (mx and my) then return end
+
+    local r     = SparkleRadius() -- radius in pixels
+    local arms  = 6
+    local alpha = 0.6 + 0.35 * math.sin(sparklePhase * 2.2) -- subtle alpha flicker
+
+    gl.LineWidth(1.5)
+    gl.BeginEnd(GL.LINES, function()
+        for i = 0, arms - 1 do
+            local ang = sparklePhase + i * (2 * math.pi / arms)
+            local dx  = math.cos(ang)
+            local dy  = math.sin(ang)
+
+            -- Rainbow per arm with time offset
+            local h = (huePhase + i / arms) % 1.0
+            local rr, gg, bb = hsv2rgb(h, 1.0, 1.0)
+            gl.Color(rr, gg, bb, alpha)
+
+            gl.Vertex(mx - dx * (r * 0.45), my - dy * (r * 0.45))
+            gl.Vertex(mx + dx * (r * 0.45), my + dy * (r * 0.45))
+        end
+    end)
+    gl.LineWidth(1)
+    gl.Color(1, 1, 1, 1)
+end

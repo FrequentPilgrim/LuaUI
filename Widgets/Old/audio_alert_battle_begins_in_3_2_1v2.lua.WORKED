@@ -1,0 +1,134 @@
+--------------------------------------------------------------------------------
+-- battle_begins_in_3_2_1 Audio Alert
+-- Plays once at start:
+--   • Immediately when local PlayerReady becomes true (GameSetup ready==true)
+--   • Or at the exact countdown edge 1 → 0 via PreGameTimekeeping
+-- Skips spectators/replays unless enabled. Minimal, single-responsibility.
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name      = "battle_begins_in_3_2_1 Audio Alert",
+    desc      = "Plays once: immediately on PlayerReady=true, or when countdown ticks 1→0. Skips spectators/replays.",
+    author    = "You",
+    date      = "2025-08-20",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Epic Menu: Settings / Audio / Audio Alerts
+--------------------------------------------------------------------------------
+options_path = 'Settings/Audio/Audio Alerts'
+options = {
+  header = {
+    name  = "Battle begins audio",
+    type  = "text",
+    value = "Plays an alert when your local PlayerReady flips to true OR when pregame countdown hits the 1→0 edge."
+  },
+  enable = {
+    name  = "Enable battle-begins alert",
+    type  = "bool",
+    value = true,
+  },
+  volume = {
+    name  = "Volume (0.0–3.0)",
+    type  = "number", value = 3.0, min = 0, max = 1, step = 0.05,
+  },
+  allowSpectator = {
+    name  = "Also play in replays / spectator",
+    type  = "bool",
+    value = false,
+  },
+}
+
+--------------------------------------------------------------------------------
+-- Config
+--------------------------------------------------------------------------------
+local START_SOUND = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'  -- keep your existing filename
+
+--------------------------------------------------------------------------------
+-- Locals
+--------------------------------------------------------------------------------
+local PlaySoundFile        = Spring.PlaySoundFile
+local GetSpectatingState   = Spring.GetSpectatingState
+local Echo                 = Spring.Echo
+
+local played         = false       -- hard debounce
+local prevCountdown  = nil         -- last countdown integer seen (for 1→0 edge)
+
+local function enabled()
+  if not options.enable.value then return false end
+  local _, _, isSpec, _, _, isReplay = GetSpectatingState()
+  if (isSpec or isReplay) and not options.allowSpectator.value then
+    return false
+  end
+  return true
+end
+
+local function game_message(s)
+  Echo('game_message: '..s)
+end
+
+local function playOnce(tag)
+  if played then return end
+  if not enabled() then return end
+  played = true
+  local vol = tonumber(options.volume.value) or 1.0
+  PlaySoundFile(START_SOUND, vol, "ui")
+  game_message(("Battle begins: %s → audio played"):format(tag or ""))
+end
+
+--------------------------------------------------------------------------------
+-- Call-ins
+--------------------------------------------------------------------------------
+
+-- Change #1: Fire immediately when the local player's Ready flips true.
+-- This call-in is invoked during the pregame lobby/setup phase.
+function widget:GameSetup(state, ready, playerStates)
+  if played then return end
+  if not enabled() then return end
+  if ready then
+    -- Fire right away (used to arm and wait a tick; now immediate)
+    playOnce('PlayerReady immediate')
+  end
+end
+
+-- Change #2: Instead of firing on "3", fire exactly when countdown ticks 1→0.
+-- Zero-K exposes pregame timing via this UI call-in.
+function widget:PreGameTimekeeping(t)
+  if played then return end
+  if not enabled() then return end
+
+  -- Normalize countdown value to an integer if possible.
+  local v = t
+  if type(v) == 'string' then v = tonumber(v) end
+  if type(v) ~= 'number' then return end
+  v = math.floor(v)
+
+  -- Detect edge transition 1 → 0
+  if prevCountdown == 1 and v == 0 then
+    playOnce('countdown 1→0')
+  end
+  prevCountdown = v
+end
+
+-- Optional: once the game actually starts, we can stop listening to pregame ticks.
+function widget:GameStart()
+  -- Not strictly necessary, but avoids any late pregame noise.
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+function widget:Initialize()
+  if not VFS.FileExists(START_SOUND) then
+    game_message("Battle-begins alert: sound file not found at "..START_SOUND)
+  end
+end
+
+function widget:Shutdown()
+  -- Reset locals on reload
+  played = false
+  prevCountdown = nil
+end

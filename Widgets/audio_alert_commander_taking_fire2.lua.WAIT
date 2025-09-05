@@ -1,0 +1,137 @@
+function widget:GetInfo()
+  return {
+    name      = "commander_taking_fire Audio Alert",
+    desc      = "Plays a sound when your commander takes damage (supports all commander types)",
+    author    = "FrequentPilgrim (+Epic Menu toggle patch)",
+    date      = "2025-06-09",
+    license   = "GNU GPL v2",
+    layer     = 0,
+    enabled   = true,
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Epic Menu Options (additive, with persistence)
+--------------------------------------------------------------------------------
+options = options or {}
+
+options.enableCommanderDamageAlert = {
+  name  = "Commander Taking Fire Alert",
+  desc  = "Play an alert sound when your commander takes damage.",
+  type  = "bool",
+  value = true,
+  path  = "Settings/Audio/Audio Alerts",
+}
+
+-- NEW: Off by default to avoid any behavior change until you enable it
+options.useVoiceQueue = {
+  name  = "Serialize Voice via Bus",
+  desc  = "Route this alert through the global voice queue so it never overlaps others.",
+  type  = "bool",
+  value = false,
+  path  = "Settings/Audio/Audio Alerts",
+}
+
+-- NEW: Duration hint for the queue (needed for .ogg). Adjust to your file length.
+options.voiceClipDuration = {
+  name  = "Voice Queue: Clip Duration (s)",
+  desc  = "Length of commander_taking_fire.ogg for queue timing.",
+  type  = "number",
+  min   = 0.5, max = 5.0, step = 0.05,
+  value = 1.8,
+  path  = "Settings/Audio/Audio Alerts",
+}
+
+function widget:GetConfigData()
+  return {
+    enableCommanderDamageAlert = options.enableCommanderDamageAlert
+      and options.enableCommanderDamageAlert.value or true,
+    useVoiceQueue = options.useVoiceQueue and options.useVoiceQueue.value or false,
+    voiceClipDuration = options.voiceClipDuration and options.voiceClipDuration.value or 1.8,
+  }
+end
+
+function widget:SetConfigData(data)
+  if not data then return end
+  if options.enableCommanderDamageAlert and data.enableCommanderDamageAlert ~= nil then
+    options.enableCommanderDamageAlert.value = data.enableCommanderDamageAlert
+  end
+  if options.useVoiceQueue and data.useVoiceQueue ~= nil then
+    options.useVoiceQueue.value = data.useVoiceQueue
+  end
+  if options.voiceClipDuration and data.voiceClipDuration ~= nil then
+    options.voiceClipDuration.value = tonumber(data.voiceClipDuration) or options.voiceClipDuration.value
+  end
+end
+
+local function FeatureEnabled()
+  return options and options.enableCommanderDamageAlert
+     and options.enableCommanderDamageAlert.value
+end
+
+--------------------------------------------------------------------------------
+-- Original configuration & locals (unchanged)
+--------------------------------------------------------------------------------
+local GetMyTeamID       = Spring.GetMyTeamID
+local GetUnitRulesParam = Spring.GetUnitRulesParam
+local GetGameFrame      = Spring.GetGameFrame
+local PlaySoundFile     = Spring.PlaySoundFile
+local VFS_FileExists    = VFS.FileExists
+
+local UnitDefs          = UnitDefs
+local SOUND_FILE        = "LuaUI/sounds/commander_taking_fire.ogg"
+local COOLDOWN_FRAMES   = 660  -- 22 seconds * 30 FPS
+local lastPlayFrame     = 0
+
+local commanderPrefixes = {
+  "dynrecon", "dynstrike", "dynassault", "dynsupport", "dynknight",
+  "dyntrainer", "zk_commander", "zk_custom", "zk_chassis", "comm"
+}
+
+local function IsCommander(unitID, unitDefID)
+  local unitDef = UnitDefs[unitDefID]
+  if not unitDef then return false end
+  local name     = unitDef.name or ""
+  local isCmd    = GetUnitRulesParam(unitID, "iscommander")
+  local commtype = GetUnitRulesParam(unitID, "commtype")
+  local level    = GetUnitRulesParam(unitID, "level")
+  if isCmd == 1 then return true end
+  if commtype or (level and level > 0) then return true end
+  for _, prefix in ipairs(commanderPrefixes) do
+    if name:sub(1, #prefix) == prefix then return true end
+  end
+  if name:find("_base") then return true end
+  return false
+end
+
+--------------------------------------------------------------------------------
+-- Engine Hooks
+--------------------------------------------------------------------------------
+function widget:UnitDamaged(unitID, unitDefID, unitTeam)
+  if not FeatureEnabled() then return end
+  if unitTeam ~= GetMyTeamID() then return end
+  if not IsCommander(unitID, unitDefID) then return end
+
+  local currentFrame = GetGameFrame()
+  if currentFrame - lastPlayFrame < COOLDOWN_FRAMES then return end
+
+  -- NEW: serialize via shared queue if enabled and present; else original behavior
+  if options.useVoiceQueue and options.useVoiceQueue.value and WG and WG.VoiceBus and WG.VoiceBus.play then
+    WG.VoiceBus.play(SOUND_FILE, {
+      duration = options.voiceClipDuration and options.voiceClipDuration.value or 1.8,
+      volume   = 3.0,
+      -- channel = "ui",  -- uncomment to route under UI slider (or "voice" to use Unit Reply/Voice)
+      -- key = "commander_taking_fire", cooldown = 0, priority = 0,
+    })
+  else
+    PlaySoundFile(SOUND_FILE, 3.0)
+  end
+
+  lastPlayFrame = currentFrame
+end
+
+function widget:Initialize()
+  if not VFS_FileExists(SOUND_FILE) then
+    widgetHandler:RemoveWidget(self)
+  end
+end

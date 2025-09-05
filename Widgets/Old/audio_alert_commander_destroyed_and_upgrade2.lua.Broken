@@ -1,0 +1,208 @@
+function widget:GetInfo()
+  return {
+    name      = "Audio Alert - Commander Destroyed / Upgrade",
+    desc      = "Plays a sound when your commander dies; plays a different sound when a commander upgrade completes. Handles multiple commanders and gifts.",
+    author    = "FrequentPilgrim (+Epic Menu toggle patch)",
+    date      = "2025-08-16",
+    license   = "GNU GPL v2",
+    layer     = 0,
+    enabled   = true,
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Epic Menu Toggles (pattern identical to your working widget)  -- :contentReference[oaicite:1]{index=1}
+--------------------------------------------------------------------------------
+options = options or {}
+options.enableCommanderDestroyedAlert = {
+  name  = "Commander Destroyed Alert",
+  desc  = "Play an alert sound when one of your commanders is destroyed.",
+  type  = "bool",
+  value = true,
+  path  = "Settings/Audio/Audio Alerts",
+}
+options.enableCommanderUpgradeAlert = {
+  name  = "Commander Upgrade Complete Alert",
+  desc  = "Play an alert sound when a commander upgrade completes (morph replacement).",
+  type  = "bool",
+  value = true,
+  path  = "Settings/Audio/Audio Alerts",
+}
+
+function widget:GetConfigData()
+  return {
+    enableCommanderDestroyedAlert = options.enableCommanderDestroyedAlert
+      and options.enableCommanderDestroyedAlert.value or true,
+    enableCommanderUpgradeAlert = options.enableCommanderUpgradeAlert
+      and options.enableCommanderUpgradeAlert.value or true,
+  }
+end
+
+function widget:SetConfigData(data)
+  if not data then return end
+  if data.enableCommanderDestroyedAlert ~= nil and options.enableCommanderDestroyedAlert then
+    options.enableCommanderDestroyedAlert.value = data.enableCommanderDestroyedAlert
+  end
+  if data.enableCommanderUpgradeAlert ~= nil and options.enableCommanderUpgradeAlert then
+    options.enableCommanderUpgradeAlert.value = data.enableCommanderUpgradeAlert
+  end
+end
+
+local function DestroyOn() return options.enableCommanderDestroyedAlert and options.enableCommanderDestroyedAlert.value end
+local function UpgradeOn() return options.enableCommanderUpgradeAlert and options.enableCommanderUpgradeAlert.value end
+
+--------------------------------------------------------------------------------
+-- Core (commander detection kept from your file)  -- :contentReference[oaicite:2]{index=2}
+--------------------------------------------------------------------------------
+local GetMyTeamID       = Spring.GetMyTeamID
+local GetUnitRulesParam = Spring.GetUnitRulesParam
+local PlaySoundFile     = Spring.PlaySoundFile
+local VFS_FileExists    = VFS.FileExists
+local GetGameFrame      = Spring.GetGameFrame
+local GetAllUnits       = Spring.GetAllUnits
+local GetUnitTeam       = Spring.GetUnitTeam
+local GetUnitDefID      = Spring.GetUnitDefID
+
+local UnitDefs = UnitDefs
+
+local SOUND_DESTROYED = "LuaUI/sounds/commanderchassisdestroyed.ogg"
+local SOUND_UPGRADE   = "LuaUI/sounds/upgradecomplete.ogg"
+
+-- Same heuristic prefixes / rules-params as the uploaded widget  -- :contentReference[oaicite:3]{index=3}
+local commanderPrefixes = {
+  "dynrecon","dynstrike","dynassault","dynsupport","dynknight",
+  "dyntrainer","zk_commander","zk_custom","zk_chassis","comm"
+}
+
+local function IsCommander(unitID, unitDefID)
+  local ud = UnitDefs[unitDefID]
+  if not ud then return false end
+  local name     = ud.name or ""
+  local isCmd    = GetUnitRulesParam(unitID, "iscommander")
+  local commtype = GetUnitRulesParam(unitID, "commtype")
+  local level    = GetUnitRulesParam(unitID, "level")
+
+  if isCmd == 1 then return true end
+  if commtype or (level and level > 0) then return true end
+  for _, p in ipairs(commanderPrefixes) do
+    if name:sub(1, #p) == p then return true end
+  end
+  if name:find("_base") then return true end
+  return false
+end
+
+--------------------------------------------------------------------------------
+-- Tracking: supports multiple commanders & gifts
+--------------------------------------------------------------------------------
+local myTeamID
+local trackedComms = {}    -- unitID -> true
+local myCommanderCount = 0
+
+local function addCommander(u)
+  if not trackedComms[u] then trackedComms[u] = true; myCommanderCount = myCommanderCount + 1 end
+end
+local function removeCommander(u)
+  if trackedComms[u] then trackedComms[u] = nil; myCommanderCount = math.max(0, myCommanderCount - 1) end
+end
+
+local function indexExisting()
+  trackedComms, myCommanderCount = {}, 0
+  local units = GetAllUnits()
+  for i = 1, #units do
+    local u = units[i]
+    if GetUnitTeam(u) == myTeamID then
+      local udid = GetUnitDefID(u)
+      if udid and IsCommander(u, udid) then addCommander(u) end
+    end
+  end
+end
+
+--------------------------------------------------------------------------------
+-- Pending classification of a commander "death"
+-- We classify each destruction after a short window:
+--   - If a commander was (Created/Finished) for us during the window AND we did not receive a commander via Given/Transfer → treat as UPGRADE.
+--   - Otherwise → treat as REAL DEATH (play destroyed sound) even if we still have other commanders.
+--------------------------------------------------------------------------------
+local CONFIRM_FRAMES = 30  -- ~1s @30fps
+local pending = nil        -- { expires, sawCreateOrFinish=false, sawGivenIncrease=false }
+
+local function queuePending()
+  pending = { expires = GetGameFrame() + CONFIRM_FRAMES, sawCreateOrFinish = false, sawGivenIncrease = false }
+end
+
+local function clearPending()
+  pending = nil
+end
+
+--------------------------------------------------------------------------------
+-- Engine Hooks
+--------------------------------------------------------------------------------
+function widget:Initialize()
+  myTeamID = GetMyTeamID()
+  indexExisting()
+  if (not VFS_FileExists(SOUND_DESTROYED)) and (not VFS_FileExists(SOUND_UPGRADE)) then
+    widgetHandler:RemoveWidget(self)
+  end
+end
+
+function widget:PlayerChanged()
+  myTeamID = GetMyTeamID()
+  indexExisting()
+end
+
+function widget:UnitCreated(unitID, unitDefID, unitTeam)
+  if unitTeam ~= myTeamID then return end
+  if IsCommander(unitID, unitDefID) then
+    addCommander(unitID)
+    if pending then pending.sawCreateOrFinish = true end
+  end
+end
+
+function widget:UnitFinished(unitID, unitDefID, unitTeam)
+  if unitTeam ~= myTeamID then return end
+  if IsCommander(unitID, unitDefID) then
+    addCommander(unitID)
+    if pending then pending.sawCreateOrFinish = true end
+  end
+end
+
+function widget:UnitGiven(unitID, unitDefID, newTeam, oldTeam)
+  if oldTeam == myTeamID and IsCommander(unitID, unitDefID) then removeCommander(unitID) end
+  if newTeam == myTeamID and IsCommander(unitID, unitDefID) then
+    addCommander(unitID)
+    if pending then pending.sawGivenIncrease = true end   -- disambiguate gift vs upgrade
+  end
+end
+
+function widget:UnitTaken(unitID, unitDefID, oldTeam, newTeam)
+  if oldTeam == myTeamID and IsCommander(unitID, unitDefID) then removeCommander(unitID) end
+  if newTeam == myTeamID and IsCommander(unitID, unitDefID) then
+    addCommander(unitID)
+    if pending then pending.sawGivenIncrease = true end
+  end
+end
+
+function widget:UnitDestroyed(unitID, unitDefID, unitTeam)
+  if unitTeam ~= myTeamID then return end
+  if not IsCommander(unitID, unitDefID) then return end
+  removeCommander(unitID)
+  queuePending()
+end
+
+function widget:GameFrame(n)
+  if not pending then return end
+  if n < pending.expires then return end
+
+  local classifyAsUpgrade = pending.sawCreateOrFinish and not pending.sawGivenIncrease
+
+  if classifyAsUpgrade then
+    if UpgradeOn() and VFS_FileExists(SOUND_UPGRADE) then
+      PlaySoundFile(SOUND_UPGRADE, 3.0)
+    end
+  else
+    if DestroyOn() and VFS_FileExists(SOUND_DESTROYED) then
+      PlaySoundFile(SOUND_DESTROYED, 3.0)
+    end
+  end
+  clearPending()
+end

@@ -1,0 +1,75 @@
+function widget:GetInfo()
+  return {
+    name      = "Countdown Start Audio",
+    desc      = "Plays once when the STARTING splash begins (ForceStart-safe).",
+    author    = "You",
+    date      = "2025-08-17",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true
+  }
+end
+
+-- ====== CONFIG ======
+local START_SOUND    = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+local START_VOL      = 1.0
+local START_CHAN     = 'ui'
+local DEBUG_MESSAGES = true
+
+-- ====== STATE ======
+local played        = false
+local armedByReady  = false
+local sawTickAfterArm = false   -- just for debug spew suppression
+
+local function say(msg)
+  if DEBUG_MESSAGES then Spring.Echo('game_message:[Countdown] '..msg) end
+end
+
+local function playOnce()
+  if played then return end
+  if VFS.FileExists(START_SOUND) then
+    Spring.PlaySoundFile(START_SOUND, START_VOL, START_CHAN)
+    played = true
+    say('start cue fired (armed-by-ready, first tick)')
+  else
+    say('MISSING SOUND: '..START_SOUND)
+  end
+end
+
+-- Arm when the host flips to ready (ForceStart or natural).
+-- We DO NOT play here; we wait for the very next pregame tick.
+function widget:GameSetup(state, ready, playerStates)
+  if played then return end
+  if ready and not armedByReady then
+    armedByReady = true
+    sawTickAfterArm = false
+    say('armed by GameSetup(ready=true)')
+  end
+end
+
+-- Fire the first time we see a pregame tick AFTER we were armed.
+-- This lines up with the moment the STARTING splash is shown.
+function widget:PreGameTimekeeping(secondsUntilStart)
+  if played then return end
+  if armedByReady then
+    if not sawTickAfterArm then
+      sawTickAfterArm = true
+      say('first tick after ready: '.. tostring(secondsUntilStart))
+      playOnce()
+    end
+    return
+  end
+  -- (Optional) If you ever want natural-countdown behavior when not armed, you could
+  -- add a 3..0 trigger here. We omit it to avoid early plays on long lobby timers.
+end
+
+-- Safety: if somehow nothing fired and the game actually begins, stop listening.
+function widget:GameStart()
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+function widget:Shutdown()
+  played = false
+  armedByReady = false
+  sawTickAfterArm = false
+end

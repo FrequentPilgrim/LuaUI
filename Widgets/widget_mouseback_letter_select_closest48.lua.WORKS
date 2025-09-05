@@ -1,8 +1,8 @@
 function widget:GetInfo()
     return {
-        name = "Unit Selector By Letter",
+        name = "Single Unit Selector",
         desc = "Selects nearest unit(s) in a letter group using Mouse Back + Key combos",
-        author = "ChatGPT + FrequentPilgrim",
+        author = "FrequentPilgrim",
         date = "2025-06-13",
         license = "GNU GPL v2",
         layer = 0,
@@ -10,6 +10,9 @@ function widget:GetInfo()
     }
 end
 
+--==================================================
+-- Original locals (unchanged behavior)
+--==================================================
 local MOUSE_BACK_BUTTON = 4
 local mouseBackHeld = false
 local selectedUnitsThisCycle = {}
@@ -26,7 +29,66 @@ for i = 65, 90 do
     keycodeToLetter[Spring.GetKeyCode(ch:lower())] = ch
 end
 
+--==================================================
+-- ADD-ONLY: Epic Menu option to enable/disable
+-- Appears at: Settings/Misc/Single Unit Selector
+--==================================================
+options_order = options_order or {}
+options = options or {}
+
+local OPT_PATH = "Settings/Misc/Single Unit Selector"
+
+local function _append_order(key)
+    for i = 1, #options_order do
+        if options_order[i] == key then return end
+    end
+    options_order[#options_order + 1] = key
+end
+
+if not options.enabled then
+    options.enabled = {
+        name  = "Enable",
+        type  = "bool",
+        value = true,  -- default preserves current behavior
+        path  = OPT_PATH,
+        desc  = "Enable or disable this widget’s functionality.",
+        OnChange = function(self)
+            if self.value == false then
+                -- Safely reset transient state when disabling
+                mouseBackHeld = false
+                selectedUnitsThisCycle = {}
+                lastSelectedUnitPositions = {}
+                drawTimer = 0
+                hasClearedSelectionThisCycle = false
+            end
+        end,
+    }
+    _append_order("enabled")
+end
+
+local function Enabled()
+    return (options and options.enabled and options.enabled.value) ~= false
+end
+
+-- Persist only the toggle value (no other behavior changes)
+function widget:GetConfigData()
+    return {
+        enabled = (options.enabled and options.enabled.value) ~= false
+    }
+end
+
+function widget:SetConfigData(data)
+    if type(data) == "table" and options and options.enabled and data.enabled ~= nil then
+        options.enabled.value = data.enabled and true or false
+    end
+end
+
+--==================================================
+-- Original logic (guarded by the toggle; unchanged)
+--==================================================
+
 function widget:MousePress(x, y, button)
+    if not Enabled() then return false end
     if button == MOUSE_BACK_BUTTON then
         mouseBackHeld = true
         selectedUnitsThisCycle = {}
@@ -44,6 +106,7 @@ function widget:MousePress(x, y, button)
 end
 
 function widget:MouseRelease(x, y, button)
+    if not Enabled() then return false end
     if button == MOUSE_BACK_BUTTON then
         mouseBackHeld = false
         selectedUnitsThisCycle = {}
@@ -54,6 +117,7 @@ function widget:MouseRelease(x, y, button)
 end
 
 function widget:KeyPress(key, mods, isRepeat)
+    if not Enabled() then return false end
     if not mouseBackHeld then return false end
 
     local letter = keycodeToLetter[key]
@@ -145,6 +209,7 @@ function widget:KeyPress(key, mods, isRepeat)
 end
 
 function widget:DrawWorld()
+    if not Enabled() then return end
     if drawTimer > 0 and #lastSelectedUnitPositions > 0 then
         local mx, my = Spring.GetMouseState()
         local type, pos = Spring.TraceScreenRay(mx, my, true)

@@ -1,0 +1,203 @@
+function widget:GetInfo()
+  return {
+    name      = "Commander Alerts (Upgrade vs Death)",
+    desc      = "Two audio alerts with minimal Epic Menu: Commander Destroyed / Upgrade Complete",
+    author    = "JHB + GPT",
+    date      = "2025-08-16",
+    license   = "GPLv2+",
+    layer     = 0,
+    enabled   = true,
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Minimal Epic Menu: exactly two toggles (one per audio alert)
+--------------------------------------------------------------------------------
+options_path  = 'Settings/Audio/Audio Alerts'
+options_order = {"alertDeath", "alertUpgrade"}
+options = {
+  alertDeath = {
+    name = "Commander Chassis Destroyed Alert",
+    desc = "Play an alert when a commander chassis is destroyed.",
+    type = "bool", value = true,
+  },
+  alertUpgrade = {
+    name = "Upgrade Complete Alert",
+    desc = "Play an alert when a commander morph finishes.",
+    type = "bool", value = true,
+  },
+}
+
+--------------------------------------------------------------------------------
+-- Hardcoded defaults (intentionally NOT exposed in the menu)
+--------------------------------------------------------------------------------
+local SOUND_DEATH_PATH   = "LuaUI/Sounds/commander_chassis_destroyed.ogg"
+local SOUND_UPGRADE_PATH = "LuaUI/Sounds/upgrade_complete.ogg"
+local VOLUME             = 0.90        -- overall volume for both lines
+local ALLY_ONLY          = true        -- only alert for my team + allies (LOS-safe)
+local SHOW_TEXT          = true        -- always show system-style text
+local DETECT_WINDOW      = 12          -- frames to pair destroy→create (~0.4s @30fps)
+local DETECT_RADIUS      = 64          -- elmos for "same spot" match
+local RECENT_CREATE_WIN  = 6           -- tiny cache if Create arrives before Destroy
+
+--------------------------------------------------------------------------------
+-- Locals / helpers
+--------------------------------------------------------------------------------
+local spGetUnitTeam     = Spring.GetUnitTeam
+local spGetTeamInfo     = Spring.GetTeamInfo
+local spGetMyTeamID     = Spring.GetMyTeamID
+local spGetUnitPosition = Spring.GetUnitPosition
+local spPlaySoundFile   = Spring.PlaySoundFile
+local spEcho            = Spring.Echo
+local VFSFileExists     = VFS.FileExists
+
+local myTeamID
+local function MyAllyTeam()
+  return select(6, spGetTeamInfo(myTeamID or spGetMyTeamID(), false))
+end
+
+local function IsAlliedToMe(teamID)
+  return teamID and teamID == (myTeamID or spGetMyTeamID())
+end
+
+local function SystemText(msg)
+  if SHOW_TEXT then
+    spEcho("game_message: " .. msg)
+  end
+end
+
+local function SafePlay(path)
+  if not path or path == "" then return end
+  if not VFSFileExists(path) then return end
+  spPlaySoundFile(path, VOLUME)
+end
+
+local function Dist2DSq(x1,z1, x2,z2)
+  local dx, dz = (x1 - x2), (z1 - z2)
+  return dx*dx + dz*dz
+end
+
+-- Commander fingerprint tolerant to ZK variants (stock/custom/campaign/captured)
+local function IsCommanderDef(unitDefID)
+  local ud = UnitDefs[unitDefID]; if not ud then return false end
+  local cp = ud.customParams or {}
+  if cp.iscommander or cp.commander or cp.commtype or cp.modularcomm or cp.dynamic_comm or cp.dyncomm then
+    return true
+  end
+  local n = (ud.name or ""):lower()
+  if n:find("commander", 1, true) or n:find("dyn", 1, true) then
+    return true
+  end
+  return false
+end
+
+--------------------------------------------------------------------------------
+-- Detection state (UI-side pairing, no LuaRules access required)
+--------------------------------------------------------------------------------
+-- pendingDeaths[oldID] = {team=, x=, z=, expire=frame+DETECT_WINDOW}
+local pendingDeaths = {}
+-- recentCreates[i] = {unitID=, team=, x=, z=, expire=frame+RECENT_CREATE_WIN}
+local recentCreates = {}
+
+--------------------------------------------------------------------------------
+-- UI Callins
+--------------------------------------------------------------------------------
+function widget:Initialize()
+  myTeamID = spGetMyTeamID()
+end
+
+-- Try match a created comm to a pending death (normal order)
+local function TryPairCreate(team, x, z, nowFrame, radiusSq)
+  local bestOld, bestDist = nil, 1e30
+  for oldID, pd in pairs(pendingDeaths) do
+    if pd.team == team and nowFrame <= pd.expire then
+      local d2 = Dist2DSq(pd.x, pd.z, x, z)
+      if d2 <= radiusSq and d2 < bestDist then
+        bestDist, bestOld = d2, oldID
+      end
+    end
+  end
+  return bestOld
+end
+
+-- Rare order: Destroy after Create (use tiny cache)
+local function TryPairWithRecentCreate(team, x, z, nowFrame, radiusSq)
+  local bestIdx, bestDist = nil, 1e30
+  for i=1,#recentCreates do
+    local rc = recentCreates[i]
+    if rc and rc.team == team and nowFrame <= rc.expire then
+      local d2 = Dist2DSq(x, z, rc.x, rc.z)
+      if d2 <= radiusSq and d2 < bestDist then
+        bestDist, bestIdx = d2, i
+      end
+    end
+  end
+  return bestIdx
+end
+
+function widget:UnitCreated(unitID, unitDefID, unitTeam)
+  if not IsCommanderDef(unitDefID) then return end
+  if not IsAlliedToMe(unitTeam)    then return end
+
+  local x, y, z = spGetUnitPosition(unitID)
+  if not x then x, z = 0, 0 end  -- LOS guard (allied should usually have coords)
+
+  local now      = Spring.GetGameFrame()
+  local radiusSq = DETECT_RADIUS * DETECT_RADIUS
+
+  -- Normal order: Destroy then Create -> UPGRADE
+  local bestOld = TryPairCreate(unitTeam, x, z, now, radiusSq)
+  if bestOld then
+    pendingDeaths[bestOld] = nil
+    if options.alertUpgrade.value then SafePlay(SOUND_UPGRADE_PATH) end
+    SystemText("Upgrade Complete.")
+    return
+  end
+
+  -- Otherwise cache this Create briefly (for rare reversed order)
+  recentCreates[#recentCreates+1] = {
+    unitID = unitID, team = unitTeam, x = x or 0, z = z or 0,
+    expire = now + RECENT_CREATE_WIN,
+  }
+end
+
+function widget:UnitDestroyed(unitID, unitDefID, unitTeam)
+  if not IsCommanderDef(unitDefID) then return end
+  if not IsAlliedToMe(unitTeam)    then return end
+
+  local x, y, z = spGetUnitPosition(unitID)
+  if not x then x, z = 0, 0 end
+
+  local now      = Spring.GetGameFrame()
+  local radiusSq = DETECT_RADIUS * DETECT_RADIUS
+
+  -- Rare order: Create came first → pair now => UPGRADE
+  local idx = TryPairWithRecentCreate(unitTeam, x, z, now, radiusSq)
+  if idx then
+    if options.alertUpgrade.value then SafePlay(SOUND_UPGRADE_PATH) end
+    SystemText("Upgrade Complete.")
+    recentCreates[idx] = nil
+    return
+  end
+
+  -- Otherwise, queue as maybe-death; confirm later if no matching Create appears
+  pendingDeaths[unitID] = { team = unitTeam, x = x or 0, z = z or 0, expire = now + DETECT_WINDOW }
+end
+
+function widget:GameFrame(n)
+  -- Confirm genuine deaths (no upgrade match within window)
+  for oldID, pd in pairs(pendingDeaths) do
+    if n > pd.expire then
+      if options.alertDeath.value then SafePlay(SOUND_DEATH_PATH) end
+      SystemText("Commander Chassis Destroyed.")
+      pendingDeaths[oldID] = nil
+    end
+  end
+  -- Clean recent-create cache
+  for i = #recentCreates, 1, -1 do
+    local rc = recentCreates[i]
+    if not rc or n > rc.expire then
+      recentCreates[i] = nil
+    end
+  end
+end

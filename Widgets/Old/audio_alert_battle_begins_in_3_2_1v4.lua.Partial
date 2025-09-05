@@ -1,0 +1,154 @@
+--------------------------------------------------------------------------------
+-- battle_begins_in_3_2_1 Audio Alert (debug build, logic unchanged)
+--   • Plays immediately when local PlayerReady becomes true (GameSetup)
+--   • Plays at countdown edge 1 → 0 (PreGameTimekeeping)
+--   • Spec/replay gate unchanged
+--   • Adds system-style debug breadcrumbs to see exactly what fires in MP
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name      = "battle_begins_in_3_2_1 Audio Alert",
+    desc      = "Plays once at start: on local PlayerReady, or at countdown 1→0. Prints ready-change debug.",
+    author    = "You",
+    date      = "2025-08-20",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Config (keep your existing sound asset name/path)
+--------------------------------------------------------------------------------
+local START_SOUND = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+
+-- Keep this exactly as before.
+local RUN_IN_SPECTATOR = false
+
+--------------------------------------------------------------------------------
+-- Locals
+--------------------------------------------------------------------------------
+local PlaySoundFile        = Spring.PlaySoundFile
+local GetSpectatingState   = Spring.GetSpectatingState
+local GetGameSeconds       = Spring.GetGameSeconds
+local GetPlayerInfo        = Spring.GetPlayerInfo
+local Echo                 = Spring.Echo
+
+local played         = false   -- sound plays only once
+local lastCountdown  = nil     -- previous countdown integer for 1→0 edge detect
+local lastLocalReady = nil     -- previous local ready value (nil/false/true)
+local lastSeenReady  = {}      -- map of playerID -> last ready bool (for others)
+
+local function gm(s) Echo('game_message: '..s) end
+local function dbg(s) Echo('game_message: [begins321] '..s) end
+
+local function enabled_now()
+  if RUN_IN_SPECTATOR then return true end
+  local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+  return not (isSpec or isReplay)
+end
+
+local function playOnce(tag)
+  if played then return end
+  if not enabled_now() then
+    dbg(("blocked by spec/replay gate at fire time (tag=%s)"):format(tag or ""))
+    return
+  end
+  played = true
+  PlaySoundFile(START_SOUND, 1.0, "ui")
+  gm(("Battle begins: %s → audio played"):format(tag or ""))
+  dbg(("PLAY tag=%s t=%.2fs"):format(tag or "", GetGameSeconds() or 0))
+end
+
+--------------------------------------------------------------------------------
+-- Call-ins
+--------------------------------------------------------------------------------
+
+-- Fire immediately when local PlayerReady becomes true.
+-- Also emit debug messages whenever the local ready value changes.
+-- Also emit ready->true for other players (debug only).
+function widget:GameSetup(state, ready, playerStates)
+  dbg(("GameSetup: state=%s ready=%s"):format(tostring(state), tostring(ready)))
+
+  -- Local ready transition debug
+  if lastLocalReady ~= ready then
+    lastLocalReady = ready
+    gm(("Local PlayerReady → %s @ %.2fs"):format(tostring(ready), GetGameSeconds() or 0))
+  end
+
+  -- Immediate fire on local ready true
+  if ready and not played then
+    playOnce('PlayerReady immediate')
+  end
+
+  -- Other players’ ready (debug only)
+  if type(playerStates) == 'table' then
+    for pid, info in pairs(playerStates) do
+      local isR = info
+      if type(info) == 'table' then isR = info.ready or info[1] end
+      isR = not not isR
+      if lastSeenReady[pid] ~= isR then
+        if isR then
+          local name = select(1, GetPlayerInfo(pid)) or ("player#"..tostring(pid))
+          gm(("PlayerReady: %s → true @ %.2fs"):format(name, GetGameSeconds() or 0))
+        end
+        lastSeenReady[pid] = isR
+      end
+    end
+  end
+end
+
+-- Fire at the exact countdown edge 1 → 0 (replaces any prior "== 3" behavior).
+function widget:PreGameTimekeeping(val)
+  -- always debug so we can confirm whether MP is calling this
+  dbg("PGTK raw="..tostring(val))
+
+  if played then return end
+  if not enabled_now() then
+    dbg("PGTK blocked by spec/replay gate")
+    return
+  end
+
+  local v = val
+  if type(v) == "string" then v = tonumber(v) end
+  if type(v) ~= "number" then
+    dbg("PGTK non-numeric value; ignoring")
+    return
+  end
+
+  v = math.floor(v)
+  dbg("PGTK v="..v)
+
+  -- Detect edge transition 1 → 0
+  if lastCountdown == 1 and v == 0 then
+    playOnce('countdown 1→0')
+  end
+
+  lastCountdown = v
+end
+
+-- Once the game actually starts, stop listening to pregame ticks (unchanged).
+function widget:GameStart()
+  dbg("GameStart")
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+function widget:Initialize()
+  dbg("Initialize")
+  if not VFS.FileExists(START_SOUND) then
+    gm("battle_begins_in_3_2_1: sound file not found at "..START_SOUND)
+  end
+  -- show initial spec/replay state
+  local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+  dbg(("Initial gate: isSpec=%s isReplay=%s RUN_IN_SPECTATOR=%s"):format(
+    tostring(isSpec), tostring(isReplay), tostring(RUN_IN_SPECTATOR)))
+end
+
+function widget:Shutdown()
+  dbg("Shutdown")
+  played = false
+  lastCountdown = nil
+  lastLocalReady = nil
+  lastSeenReady = {}
+end

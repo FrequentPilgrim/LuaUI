@@ -258,11 +258,7 @@ return {
 		},
 		[58] = {
 			[1] = "buildfacing dec",
-			[2] = {
-				[1] = "Any+delete",
-				[2] = "]",
-				[3] = "Shift+]",
-			},
+			[2] = "Any+delete",
 		},
 		[59] = {
 			[1] = "attack",
@@ -706,7 +702,7 @@ return {
 		},
 		[169] = {
 			[1] = "epic_building_starter_hotkey",
-			[2] = "Q",
+			[2] = "None",
 		},
 		[170] = {
 			[1] = "epic_persistent_build_height_hotkey_toggle",
@@ -838,7 +834,7 @@ return {
 		},
 		[202] = {
 			[1] = "select PrevSelection+_Not_RelativeHealth_99+_ClearSelection_SelectAll+",
-			[2] = "C+c",
+			[2] = "None",
 		},
 		[203] = {
 			[1] = "epic_icon_zoom_transition_iconmodehotkey",
@@ -887,6 +883,34 @@ return {
 		[214] = {
 			[1] = "epic_dev_commands_spawn_set_pos",
 			[2] = "]",
+		},
+		[215] = {
+			[1] = "epic_letter_group_icons_(filtered_letters_+_f6/f7_toggle)_enabled",
+			[2] = "f7",
+		},
+		[216] = {
+			[1] = "epic_metal_capacity_reached_audio_alert_enablemetalexcessalert",
+			[2] = "f9",
+		},
+		[217] = {
+			[1] = "epic_air_reload_filter_(pad-needed_icon_truth)_runnow",
+			[2] = "C+c",
+		},
+		[218] = {
+			[1] = "epic_air_rearm_filter_(icon_truth)_runnow",
+			[2] = "C+c",
+		},
+		[219] = {
+			[1] = "epic_air_rearm_filter_(icon_truth)_selectallrearmneeded",
+			[2] = "A+c",
+		},
+		[220] = {
+			[1] = "epic_air_rearm_filter_runnow",
+			[2] = "C+c",
+		},
+		[221] = {
+			[1] = "epic_air_rearm_filter_selectallrearmneeded",
+			[2] = "A+c",
 		},
 	},
 }

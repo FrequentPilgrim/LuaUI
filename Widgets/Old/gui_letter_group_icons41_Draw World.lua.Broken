@@ -1,0 +1,227 @@
+--------------------------------------------------------------------------------
+-- Letter Group Icons (Filtered Letters + F6/F7 Toggle)
+-- EPIC MENU: Settings / Misc / Letter Icons
+-- Pure addition style: Epic Menu option gates behavior without unloading widget.
+-- Draws small letter icons near your units indicating membership in the
+-- "Letter UnitType Multi Auto Groups" from LuaUI/Config/ZK_Data.lua.
+--------------------------------------------------------------------------------
+
+local versionNum = '4.0.0'
+
+function widget:GetInfo()
+	return {
+		name    = "Letter Group Icons (Filtered Letters + F6/F7 Toggle)",
+		desc    = "Displays letter icons for unit groups A–Z. Hold F6 and press letters to toggle visibility; F7 enables/disables; Ctrl+F7 toggles multi-letter display.",
+		author  = "FrequentPilgrim + ChatGPT",
+		date    = "2025-08-13",
+		license = "GPL-v2 or later",
+		layer   = 0,
+		enabled = true,
+	}
+end
+
+-------------------
+-- Local shortcuts
+-------------------
+local spGetTeamUnits         = Spring.GetTeamUnits
+local spGetMyTeamID          = Spring.GetMyTeamID
+local spGetUnitViewPosition  = Spring.GetUnitViewPosition
+local spValidUnitID          = Spring.ValidUnitID
+local spGetUnitDefID         = Spring.GetUnitDefID
+local spGetCameraPosition    = Spring.GetCameraPosition
+local Echo                   = Spring.Echo
+local glText                 = gl.Text
+local glColor                = gl.Color
+local glPushMatrix           = gl.PushMatrix
+local glPopMatrix            = gl.PopMatrix
+local glTranslate            = gl.Translate
+local glScale                = gl.Scale
+local glBillboard            = gl.Billboard
+local glDepthTest            = gl.DepthTest
+
+-------------------
+-- State
+-------------------
+local dataLoaded       = false
+local letterGroups     = nil
+local defLetters       = {}
+local activeLetters    = {}
+local allowedLetters   = {}
+local widgetEnabled    = true
+local holdF6           = false
+local showAllLetters   = true
+
+do
+	for c = string.byte('A'), string.byte('Z') do
+		local L = string.char(c)
+		allowedLetters[L] = true
+		activeLetters[L]  = true
+	end
+end
+
+------------------------------------------------------------
+-- EPIC MENU INTEGRATION
+------------------------------------------------------------
+options_path  = 'Settings/Misc/Letter Icons'
+options_order = { '__help', 'enabled' }
+options       = options or {}
+
+options['__help'] = {
+	name = "Letter Icons",
+	type = "label",
+	desc = "Shows letter-group icons on your units. F6+letter toggles • F7 enables/disables • Ctrl+F7 multi-letter display.",
+}
+
+options['enabled'] = {
+	name  = "Enable Letter Icons",
+	type  = "bool",
+	value = true,
+	OnChange = function(self)
+		widgetEnabled = self.value and true or false
+	end
+}
+
+WG = WG or {}
+WG.LetterIcons_SetEnabled = function(state)
+	widgetEnabled = state and true or false
+	if options and options.enabled then
+		options.enabled.value = widgetEnabled
+	end
+end
+
+---------------------------------
+-- Utility
+---------------------------------
+local function buildDefLettersMap()
+	defLetters = {}
+	if not letterGroups then return end
+	for letter, nameSet in pairs(letterGroups) do
+		if type(letter) == 'string' then
+			local L = string.upper(letter)
+			if allowedLetters[L] and type(nameSet) == 'table' then
+				for unitName, v in pairs(nameSet) do
+					if v then
+						local ud = UnitDefNames[unitName]
+						if ud then
+							local udid = ud.id
+							defLetters[udid] = defLetters[udid] or {}
+							defLetters[udid][L] = true
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+function widget:Initialize()
+	if options and options.enabled and options.enabled.value ~= nil then
+		widgetEnabled = options.enabled.value and true or false
+	else
+		widgetEnabled = true
+	end
+	local ok, data = pcall(VFS.Include, "LuaUI/Config/ZK_Data.lua")
+	if not ok or not data or not data["Letter UnitType Multi Auto Groups"] then
+		Echo("[Letter Group Icons] Failed to load mapping.")
+		dataLoaded = false
+		return
+	end
+	letterGroups = data["Letter UnitType Multi Auto Groups"]
+	buildDefLettersMap()
+	dataLoaded = true
+end
+
+function widget:Shutdown()
+	if WG then WG.LetterIcons_SetEnabled = nil end
+end
+
+function widget:KeyPress(key, mods, isRepeat)
+	if key == 287 and not isRepeat then holdF6 = true return false end
+	if key == 288 and not isRepeat then
+		if mods and mods.ctrl then
+			showAllLetters = not showAllLetters
+			Echo("[Letter Group Icons] Multi-letter display: " .. (showAllLetters and "ON" or "OFF"))
+		else
+			widgetEnabled = not widgetEnabled
+			if options and options.enabled then options.enabled.value = widgetEnabled end
+			Echo("[Letter Group Icons] " .. (widgetEnabled and "Enabled" or "Disabled"))
+		end
+		return true
+	end
+	if holdF6 and not isRepeat then
+		local sym = Spring.GetKeySymbol(key) or ""
+		local L = string.upper(sym)
+		if allowedLetters[L] then
+			activeLetters[L] = not activeLetters[L]
+			Echo("[Letter Group Icons] '" .. L .. "' visibility: " .. tostring(activeLetters[L]))
+			return true
+		end
+	end
+	return false
+end
+
+function widget:KeyRelease(key)
+	if key == 287 then holdF6 = false end
+end
+
+local function drawLettersAtUnit(unitID, letters)
+	if not letters then return end
+	local ux, uy, uz = spGetUnitViewPosition(unitID, true)
+	if not ux then return end
+	local cx, cy, cz = spGetCameraPosition()
+	local dx, dy, dz = ux - cx, uy - cy, uz - cz
+	local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+	local scale = 0.012 * dist
+	glPushMatrix()
+	glTranslate(ux, uy + 14, uz)
+	glBillboard()
+	glScale(scale, scale, 1)
+	local ox, oy = 10, -10
+	local drawn = 0
+	for _, L in ipairs(letters) do
+		if activeLetters[L] then
+			drawn = drawn + 1
+			glColor(1,1,1,1)
+			glText(L, ox + (drawn-1)*12, oy, 12, "ob")
+			if not showAllLetters then break end
+		end
+	end
+	glColor(1,1,1,1)
+	glPopMatrix()
+end
+
+local sortOrder = {
+	q= 1,w= 2,e= 3,r= 4,t= 5,y= 6,u= 7,i= 8,o= 9,p=10,
+	a=11,s=12,d=13,f=14,g=15,h=16,j=17,k=18,l=19,
+	z=20,x=21,c=22,v=23,b=24,n=25,m=26,
+}
+
+local function sortedLettersForUnit(udid)
+	local set = defLetters[udid]
+	if not set then return nil end
+	local list = {}
+	for L,_ in pairs(set) do list[#list+1] = L end
+	table.sort(list, function(a,b)
+		return (sortOrder[string.lower(a)] or 100+string.byte(a)) <
+		       (sortOrder[string.lower(b)] or 100+string.byte(b))
+	end)
+	return list
+end
+
+function widget:DrawWorld()
+	if not dataLoaded or not widgetEnabled then return end
+	glDepthTest(true)
+	local myTeam = spGetMyTeamID()
+	local units = spGetTeamUnits(myTeam)
+	for i = 1, #units do
+		local uID = units[i]
+		if spValidUnitID(uID) then
+			local udid = spGetUnitDefID(uID)
+			local letters = sortedLettersForUnit(udid)
+			if letters and #letters > 0 then
+				drawLettersAtUnit(uID, letters)
+			end
+		end
+	end
+	glDepthTest(false)
+end

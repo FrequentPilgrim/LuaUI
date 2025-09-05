@@ -1,0 +1,78 @@
+function widget:GetInfo()
+  return {
+    name      = "Countdown Start Audio",
+    desc      = "Plays once at the STARTING splash: on 3, or first tick ≤3 after ready=true (ForceStart-safe).",
+    author    = "You",
+    date      = "2025-08-17",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true
+  }
+end
+
+-- ====== CONFIG ======
+local START_SOUND = 'LuaUI/Sounds/battle_begins_in_3_2_1.ogg'
+local START_VOL   = 1.0
+local START_CHAN  = 'ui'
+local DEBUG       = false
+
+-- ====== STATE ======
+local played      = false
+local readySeen   = false
+local lastS       = nil
+
+local function dbg(m) if DEBUG then Spring.Echo('game_message:[Countdown] '..m) end end
+
+local function playOnce(tag)
+  if played then return end
+  if VFS.FileExists(START_SOUND) then
+    Spring.PlaySoundFile(START_SOUND, START_VOL, START_CHAN)
+    played = true
+    dbg('start cue fired'..(tag and (' ('..tag..')') or ''))
+  else
+    dbg('missing sound: '..START_SOUND)
+  end
+end
+
+-- Arm when game flips to ready (ForceStart or normal). We DON'T play here.
+function widget:GameSetup(state, ready, playerStates)
+  if played then return end
+  if ready then
+    readySeen = true
+    dbg('armed by GameSetup(ready=true)')
+  end
+end
+
+-- Unified trigger:
+--   B) Normal countdown: fire exactly on first entry into 3 (…>3 -> 3)
+--   A) ForceStart: once armed, fire on first tick at or below 3 (covers 3/2/1/0)
+function widget:PreGameTimekeeping(secondsUntilStart)
+  if played then return end
+  local s = math.floor((secondsUntilStart or 9999) + 0.0001)
+
+  -- B) Hit 3 precisely on the way down
+  if s == 3 and (lastS == nil or lastS > 3) then
+    playOnce('hit-3')
+    lastS = s
+    return
+  end
+
+  -- A) After ready=true, fire the first time the window is ≤3 (ForceStart may jump to 2/1/0)
+  if readySeen and s <= 3 and (lastS == nil or lastS > 3) then
+    playOnce('ready→≤3')
+    lastS = s
+    return
+  end
+
+  lastS = s
+end
+
+function widget:GameStart()
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+end
+
+function widget:Shutdown()
+  played    = false
+  readySeen = false
+  lastS     = nil
+end

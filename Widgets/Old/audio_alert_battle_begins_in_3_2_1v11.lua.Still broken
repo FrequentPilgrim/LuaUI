@@ -1,0 +1,209 @@
+--------------------------------------------------------------------------------
+-- Battle Begins Countdown (3→0) — Accurate + Smooth + Reset-safe
+-- 3 -> LuaUI/Sounds/battle_begins_in.ogg
+-- 2 -> LuaUI/Sounds/three.ogg
+-- 1 -> LuaUI/Sounds/two.ogg
+-- 0 -> LuaUI/Sounds/one.ogg
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name      = "Battle Begins Countdown (3→0) Audio Alerts",
+    desc      = "Accurate-to-tick and smooth countdown; auto-resets on aborted starts.",
+    author    = "You",
+    date      = "2025-08-22",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true,
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Config
+--------------------------------------------------------------------------------
+local SND_DIR = "LuaUI/Sounds/"
+local SOUNDS = {
+  [3] = SND_DIR .. "battle_begins_in.ogg",
+  [2] = SND_DIR .. "three.ogg",
+  [1] = SND_DIR .. "two.ogg",
+  [0] = SND_DIR .. "one.ogg",
+}
+
+-- Behavior tuning
+local RUN_IN_SPECTATOR   = false   -- true to allow in spec/replays
+local STEP_SECONDS       = 1.00    -- the ideal interval between ticks
+local GRACE_SECONDS      = 0.25    -- wait this long before filling a late tick
+local RESYNC_THRESHOLD   = 0.15    -- if a real tick drifts > this, slide schedule
+
+--------------------------------------------------------------------------------
+-- Epic Menu
+--------------------------------------------------------------------------------
+options_path = "Settings/Audio/Audio Alerts"
+options = {
+  begins_countdown_enable = {
+    name  = "Battle Begins Countdown (3→0)",
+    type  = "bool",
+    value = true,
+  },
+  begins_countdown_verbose = {
+    name  = "Verbose debug for Countdown",
+    type  = "bool",
+    value = true,
+  },
+}
+
+--------------------------------------------------------------------------------
+-- Locals
+--------------------------------------------------------------------------------
+local Echo               = Spring.Echo
+local PlaySoundFile      = Spring.PlaySoundFile
+local GetSpectatingState = Spring.GetSpectatingState
+local GetTimer           = Spring.GetTimer
+local DiffTimers         = Spring.DiffTimers
+local GetGameSeconds     = Spring.GetGameSeconds
+local FileExists         = VFS.FileExists
+
+local function enabled()  return not options or not options.begins_countdown_enable or options.begins_countdown_enable.value end
+local function verbose()  return (options and options.begins_countdown_verbose and options.begins_countdown_verbose.value) or false end
+local function spec_ok()
+  if RUN_IN_SPECTATOR then return true end
+  local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+  return not (isSpec or isReplay)
+end
+
+local function dbg(s) if verbose() then Echo("game_message: [begins321] "..s) end end
+local function gm(s)  if verbose() then Echo("game_message: "..s) end end
+
+-- State
+local played = { [3]=false, [2]=false, [1]=false, [0]=false }
+local anchorStep, anchorTime = nil, nil
+local lastTick = nil
+local countdownActive = false
+
+local function reset(reason)
+  if verbose() then dbg("RESET ("..tostring(reason)..")") end
+  played[3], played[2], played[1], played[0] = false, false, false, false
+  anchorStep, anchorTime = nil, nil
+  lastTick = nil
+  countdownActive = false
+end
+
+local function play_step(step, tag)
+  if played[step] then return end
+  if not enabled() or not spec_ok() then return end
+  local path = SOUNDS[step]
+  if not path then return end
+  dbg(("PLAY step=%d (%s) t=%.2fs"):format(step, tag or "?", GetGameSeconds() or 0))
+  if FileExists(path) then
+    PlaySoundFile(path, 1.0, "ui")
+  else
+    gm(("Missing sound file: %s"):format(path))
+  end
+  played[step] = true
+end
+
+local function parse_starting_step(state)
+  if type(state) ~= "string" then return nil end
+  local low = state:lower()
+  local n = low:match("starting%s+in%s+(%d+)")
+  local k = n and tonumber(n) or nil
+  if k and SOUNDS[k] then return k end
+  return nil
+end
+
+local function is_choose_state(state)
+  if type(state) ~= "string" then return false end
+  return state:lower():find("choose start pos", 1, true) ~= nil
+end
+
+local function target_since_anchor(step)
+  return (anchorStep - step) * STEP_SECONDS
+end
+
+--------------------------------------------------------------------------------
+-- Call-ins
+--------------------------------------------------------------------------------
+
+-- Authoritative signal. We also watch for aborts (return to Choose state).
+function widget:GameSetup(state, ready)
+  -- Abort/reset if lobby goes back to choosing positions mid-countdown
+  if countdownActive and is_choose_state(state) then
+    reset("returned to Choose start pos")
+    return
+  end
+
+  local step = parse_starting_step(state)
+  if not step then
+    if verbose() then dbg(("GameSetup: state=%s ready=%s"):format(tostring(state), tostring(ready))) end
+    return
+  end
+
+  local now = GetTimer()
+
+  -- New countdown or restart (e.g., we were at 2 and see a 3 again)
+  if not countdownActive or (anchorStep and step > anchorStep) then
+    reset("new countdown")
+    anchorStep = step
+    anchorTime = now
+    countdownActive = true
+    dbg(("Anchor set at step=%d"):format(step))
+  elseif not anchorTime then
+    -- should not happen, but be safe
+    anchorStep = step
+    anchorTime = now
+    countdownActive = true
+    dbg(("Anchor reinit at step=%d"):format(step))
+  else
+    -- Re-align schedule to the real tick if it drifts
+    local expected = target_since_anchor(step)
+    local elapsed  = DiffTimers(now, anchorTime, true)
+    local delta    = elapsed - expected
+    if math.abs(delta) > RESYNC_THRESHOLD then
+      anchorTime = anchorTime + delta
+      dbg(("Resync on step %d (δ=%.3fs)"):format(step, delta))
+    end
+  end
+
+  -- Accuracy: play immediately on the tick
+  play_step(step, "GameSetup Starting in "..step)
+  lastTick = step
+end
+
+-- Smooth fill for late ticks (only while a valid countdown is active)
+function widget:Update(dt)
+  if not countdownActive or not anchorTime or not enabled() or not spec_ok() then return end
+
+  local now     = GetTimer()
+  local elapsed = DiffTimers(now, anchorTime, true)
+
+  for s = (anchorStep or 3) - 1, 0, -1 do
+    if not played[s] then
+      local due = target_since_anchor(s)
+      if elapsed >= (due + GRACE_SECONDS) then
+        play_step(s, ("grace-fill (due=%.2fs, +%.2fs)"):format(due, elapsed - due))
+      end
+    end
+  end
+end
+
+function widget:GameStart()
+  dbg("GameStart")
+  reset("game started")
+end
+
+function widget:Initialize()
+  dbg("Initialize")
+  -- Warm files to avoid disk jitter at zero
+  for _, p in pairs(SOUNDS) do
+    if FileExists(p) then
+      PlaySoundFile(p, 0.0, "ui")
+    else
+      gm(("Countdown sound missing at %s"):format(p))
+    end
+  end
+end
+
+function widget:Shutdown()
+  dbg("Shutdown")
+  reset("shutdown")
+end

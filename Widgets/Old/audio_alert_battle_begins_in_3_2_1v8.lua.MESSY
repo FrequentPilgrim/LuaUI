@@ -1,0 +1,170 @@
+--------------------------------------------------------------------------------
+-- Battle Begins Countdown (3→0) — per-step audio cues aligned to GameSetup
+-- Fixes hiccup by preferring GameSetup over PGTK and guarding 1→0 with a timer.
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name      = "Battle Begins Countdown (3→0) Audio Alerts",
+    desc      = "Plays battle_begins_in.ogg (3), three.ogg (2), two.ogg (1), one.ogg (0) on the countdown ticks.",
+    author    = "You",
+    date      = "2025-08-22",
+    license   = "GPLv2+",
+    layer     = -100,
+    enabled   = true,
+  }
+end
+
+--------------------------------------------------------------------------------
+-- Config
+--------------------------------------------------------------------------------
+local SND_DIR = "LuaUI/Sounds/"
+local SOUNDS = {
+  [3] = SND_DIR .. "battle_begins_in.ogg",
+  [2] = SND_DIR .. "three.ogg",
+  [1] = SND_DIR .. "two.ogg",
+  [0] = SND_DIR .. "one.ogg",
+}
+
+local RUN_IN_SPECTATOR   = false   -- set true if you want it in spec/replays
+local ZERO_GUARD_SECONDS = 1.10    -- safety fire of 0 after seeing 1 if 0 is late
+
+--------------------------------------------------------------------------------
+-- Epic Menu
+--------------------------------------------------------------------------------
+options_path = "Settings/Audio/Audio Alerts"
+options = {
+  begins_countdown_enable = {
+    name  = "Battle Begins Countdown (3→0)",
+    type  = "bool",
+    value = true,
+  },
+  begins_countdown_verbose = {
+    name  = "Verbose debug for Countdown",
+    type  = "bool",
+    value = true,
+  },
+  begins_countdown_use_pgtk = {
+    name  = "Use PreGameTimekeeping as fallback",
+    type  = "bool",
+    value = false,       -- OFF by default to keep cadence smooth
+  },
+}
+
+--------------------------------------------------------------------------------
+-- Locals
+--------------------------------------------------------------------------------
+local Echo               = Spring.Echo
+local PlaySoundFile      = Spring.PlaySoundFile
+local GetSpectatingState = Spring.GetSpectatingState
+local GetTimer           = Spring.GetTimer
+local DiffTimers         = Spring.DiffTimers
+local GetGameSeconds     = Spring.GetGameSeconds
+
+local playedStep = {}              -- de-dupe per tick
+local zeroGuardStart = nil         -- timer started when we see "Starting in 1"
+
+local function feature_enabled()
+  return not options or not options.begins_countdown_enable or options.begins_countdown_enable.value
+end
+local function verbose()
+  return (options and options.begins_countdown_verbose and options.begins_countdown_verbose.value) or false
+end
+local function use_pgtk()
+  return options and options.begins_countdown_use_pgtk and options.begins_countdown_use_pgtk.value
+end
+local function spec_gate_ok()
+  if RUN_IN_SPECTATOR then return true end
+  local _,_,isSpec,_,_,isReplay = GetSpectatingState()
+  return not (isSpec or isReplay)
+end
+
+local function gm(s)  if verbose() then Echo("game_message: "..s) end end
+local function dbg(s) if verbose() then Echo("game_message: [begins321] "..s) end end
+
+local function play_step(step, tag)
+  if playedStep[step] then return end
+  if not feature_enabled() then return end
+  if not spec_gate_ok() then return end
+  local path = SOUNDS[step]
+  if not path then return end
+  dbg(("PLAY step=%d (%s) t=%.2fs"):format(step, tag or "?", GetGameSeconds() or 0))
+  if VFS.FileExists(path) then
+    PlaySoundFile(path, 1.0, "ui")
+  else
+    gm(("Missing sound file: %s"):format(path))
+  end
+  playedStep[step] = true
+  if step == 0 then zeroGuardStart = nil end
+end
+
+local function maybe_parse_step_from_state(state)
+  if type(state) ~= "string" then return nil end
+  local n = state:lower():match("starting%s+in%s+(%d+)")
+  local k = n and tonumber(n) or nil
+  if k and SOUNDS[k] then return k end
+  return nil
+end
+
+--------------------------------------------------------------------------------
+-- Call-ins
+--------------------------------------------------------------------------------
+
+-- Primary (authoritative) signal
+function widget:GameSetup(state, ready)
+  dbg(("GameSetup: state=%s ready=%s"):format(tostring(state), tostring(ready)))
+  local step = maybe_parse_step_from_state(state)
+  if step == nil then return end
+  if step == 1 then zeroGuardStart = GetTimer() end
+  play_step(step, "GameSetup Starting in "..step)
+end
+
+-- Optional: fallback to PGTK if enabled (OFF by default)
+function widget:PreGameTimekeeping(val)
+  if not use_pgtk() then
+    if verbose() then dbg("PGTK raw="..tostring(val).." (ignored)") end
+    return
+  end
+  dbg("PGTK raw="..tostring(val))
+  local v = val
+  if type(v) == "string" then v = tonumber(v) end
+  if type(v) ~= "number" then return end
+  v = math.floor(v)
+  if SOUNDS[v] then
+    if v == 1 and not playedStep[1] then zeroGuardStart = GetTimer() end
+    play_step(v, "PGTK=="..v)
+  end
+end
+
+function widget:Update(dt)
+  if zeroGuardStart and not playedStep[0] then
+    local elapsed = DiffTimers(GetTimer(), zeroGuardStart, true)
+    if elapsed >= ZERO_GUARD_SECONDS then
+      play_step(0, ("zero-guard %.2fs after '1'"):format(elapsed))
+    end
+  end
+end
+
+function widget:GameStart()
+  dbg("GameStart")
+  widgetHandler:RemoveCallIn("PreGameTimekeeping")
+  zeroGuardStart = nil
+end
+
+function widget:Initialize()
+  dbg("Initialize")
+  -- Warm the sound files once to avoid disk-jitter at 0
+  for _, path in pairs(SOUNDS) do
+    if VFS.FileExists(path) then
+      PlaySoundFile(path, 0.0, "ui") -- inaudible warm-up
+    else
+      gm(("Countdown sound missing at %s"):format(path))
+    end
+  end
+end
+
+function widget:Shutdown()
+  dbg("Shutdown")
+  playedStep = {}
+  zeroGuardStart = nil
+end

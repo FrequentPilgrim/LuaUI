@@ -1,0 +1,317 @@
+--------------------------------------------------------------------------------
+-- Letter UnitType Multi Auto Groups
+-- Player-visible messages ONLY for Assign & Clear (unless Verbose is ON).
+-- Stable Usage block (single 'text' option with empty value) in Settings/Misc.
+--------------------------------------------------------------------------------
+
+local versionNum = '2025-08-13.i'
+
+function widget:GetInfo()
+    return {
+        name    = "Letter UnitType Multi Auto Groups",
+        desc    = "Assign unit types to letter groups A–Z; Meta+letter selects, Shift adds, Ctrl filters, Backspace+Meta+letter clears.",
+        author  = "FrequentPilgrim (with JH)",
+        date    = "2025-08-13",
+        license = "GNU GPL v2 or later",
+        layer   = 0,
+        enabled = true,
+    }
+end
+
+-- Forward declarations for Epic Menu closures
+local AssignLetterGroup
+local ClearLetterGroup
+
+--------------------------------------------------------------------------------
+-- Options (Epic Menu) — appears under Settings/Misc/<this widget>
+--------------------------------------------------------------------------------
+options = {
+    -- ✔ Stable single text row: all text in 'name', keep 'value' empty to avoid "true"
+    {
+        key   = 'usage',
+        type  = 'text',
+        name  = 'LETTER AUTOGROUPS — USAGE\n' ..
+                'META + LETTER               -> Select that letter group\n' ..
+                'SHIFT + META + LETTER       -> Add that group to selection\n' ..
+                'CTRL + META + LETTER        -> Filter current selection to that group\n' ..
+                'BACKSPACE + META + LETTER   -> Clear that letter group',
+        value = '',
+    },
+
+    {
+        key    = 'enableAutoGroups',
+        name   = 'Enable Letter UnitType Auto Groups',
+        desc   = 'Toggle letter-based assignment and selection.',
+        type   = 'bool',
+        value  = true,
+        scope  = 'widget',
+    },
+    {
+        key    = 'verboseSelectionToasts',
+        name   = 'Verbose selection messages',
+        desc   = 'When ON, show messages for Select/Add/Filter too (for debugging).',
+        type   = 'bool',
+        value  = false,
+        scope  = 'widget',
+    },
+}
+
+-- Resolve indices by key (robust if we add more options later)
+local function findOptionIndex(k)
+    for i,opt in ipairs(options) do
+        if opt.key == k then return i end
+    end
+end
+local IDX_ENABLE  = findOptionIndex('enableAutoGroups')
+local IDX_VERBOSE = findOptionIndex('verboseSelectionToasts')
+
+do
+    local function _append(item) options[#options+1] = item end
+
+    -- Section: Quick Assign
+    _append({ key = "lbl_assign_letters", type = "text", name = "Quick Assign (Selected -> Letter)", value = "" })
+
+    for byte = string.byte("A"), string.byte("Z") do
+        local letter = string.char(byte)
+        _append({
+            key      = "assign_" .. letter,
+            name     = "Assign -> " .. letter,
+            desc     = "Assign CURRENT selection’s unit types to group " .. letter,
+            type     = "button",
+            noHotkey = true,
+            scope    = "widget",
+            OnChange = function() AssignLetterGroup(letter) end,
+        })
+    end
+
+    -- Section: Quick Clear
+    _append({ key = "lbl_clear_letters", type = "text", name = "Quick Clear (Erase Letter Group)", value = "" })
+
+    for byte = string.byte("A"), string.byte("Z") do
+        local letter = string.char(byte)
+        _append({
+            key      = "clear_" .. letter,
+            name     = "Clear " .. letter,
+            desc     = "Remove ALL unit types from group " .. letter,
+            type     = "button",
+            noHotkey = true,
+            scope    = "widget",
+            OnChange = function() ClearLetterGroup(letter) end,
+        })
+    end
+end
+
+--------------------------------------------------------------------------------
+-- State
+--------------------------------------------------------------------------------
+local assignedGroups = {}  -- letter -> set of unitDefNames { [unitDefName] = true, ... }
+
+local keycodeToLetter = {}
+for i = 65, 90 do -- 'A'..'Z'
+    local ch = string.char(i)
+    keycodeToLetter[Spring.GetKeyCode(ch:lower())] = ch
+end
+
+local backspaceKey  = Spring.GetKeyCode("backspace")
+local backspaceDown = false
+
+--------------------------------------------------------------------------------
+-- Messaging (system-style chat/console)
+--------------------------------------------------------------------------------
+local function ShowMessage(msg)                 -- used ONLY for Assign/Clear
+    -- Per your confirmed method for player-visible, system-style toasts:
+    Spring.Echo('game_message: ' .. msg)
+end
+
+local function VerboseMessage(msg)              -- gated by verbose option
+    if options[IDX_VERBOSE] and options[IDX_VERBOSE].value then
+        Spring.Echo('game_message: ' .. msg)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Helpers
+--------------------------------------------------------------------------------
+local function GetUnitsInGroup(letter)
+    local defNameSet = assignedGroups[letter]
+    if not defNameSet then return {} end
+
+    local myTeam = Spring.GetMyTeamID()
+    local units = Spring.GetTeamUnits(myTeam)
+    local toSelect = {}
+
+    for _, unitID in ipairs(units) do
+        local udid = Spring.GetUnitDefID(unitID)
+        if udid then
+            local defName = UnitDefs[udid].name
+            if defNameSet[defName] then
+                toSelect[#toSelect+1] = unitID
+            end
+        end
+    end
+    return toSelect
+end
+
+--------------------------------------------------------------------------------
+-- Actions
+--------------------------------------------------------------------------------
+AssignLetterGroup = function(letter)
+    local selUnits = Spring.GetSelectedUnits()
+    if #selUnits == 0 then
+        ShowMessage("No units selected to assign group " .. letter)
+        return
+    end
+
+    assignedGroups[letter] = assignedGroups[letter] or {}
+    local addedCount = 0
+    local touched = 0
+
+    for _, unitID in ipairs(selUnits) do
+        local udid = Spring.GetUnitDefID(unitID)
+        if udid then
+            local defName = UnitDefs[udid].name
+            if defName then
+                touched = touched + 1
+                if not assignedGroups[letter][defName] then
+                    assignedGroups[letter][defName] = true
+                    addedCount = addedCount + 1
+                end
+            end
+        end
+    end
+
+    if addedCount > 0 then
+        ShowMessage("Added " .. addedCount .. " unit type(s) to group " .. letter)
+    else
+        ShowMessage("No new unit types added to group " .. letter .. " (touched " .. touched .. ")")
+    end
+end
+
+ClearLetterGroup = function(letter)
+    if assignedGroups[letter] then
+        assignedGroups[letter] = nil
+        ShowMessage("Cleared group " .. letter)
+    else
+        ShowMessage("Group " .. letter .. " is not assigned")
+    end
+end
+
+local function SelectLetterGroup(letter)
+    local toSelect = GetUnitsInGroup(letter)
+    Spring.SelectUnitArray(toSelect, false)
+    VerboseMessage("Selected " .. #toSelect .. " units from group " .. letter)
+end
+
+local function AddToSelection(letter)
+    local toSelect = GetUnitsInGroup(letter)
+    Spring.SelectUnitArray(toSelect, true)
+    VerboseMessage("Added " .. #toSelect .. " units from group " .. letter)
+end
+
+local function FilterSelection(letter)
+    local current = Spring.GetSelectedUnits()
+    if #current == 0 then
+        VerboseMessage("Filtered selection to 0 units in group " .. letter)
+        return
+    end
+
+    local defNameSet = assignedGroups[letter]
+    if not defNameSet then
+        VerboseMessage("Group " .. letter .. " not assigned (filtered to 0)")
+        return
+    end
+
+    local filtered = {}
+    for _, unitID in ipairs(current) do
+        local udid = Spring.GetUnitDefID(unitID)
+        if udid then
+            local defName = UnitDefs[udid].name
+            if defNameSet[defName] then
+                filtered[#filtered+1] = unitID
+            end
+        end
+    end
+
+    Spring.SelectUnitArray(filtered, false)
+    VerboseMessage("Filtered selection to " .. #filtered .. " units in group " .. letter)
+end
+
+--------------------------------------------------------------------------------
+-- Input
+--------------------------------------------------------------------------------
+function widget:KeyPress(key, mods, isRepeat)
+    if not (options[IDX_ENABLE] and options[IDX_ENABLE].value) then return false end
+
+    if key == backspaceKey then
+        backspaceDown = true
+        return false
+    end
+
+    local letter = keycodeToLetter[key]
+    if not letter or not mods.meta then return false end
+
+    if backspaceDown then
+        -- Backspace + Meta + Letter => Clear (with message)
+        ClearLetterGroup(letter)
+        return true
+    elseif mods.alt then
+        -- Alt + Meta + Letter => Assign (with message)
+        AssignLetterGroup(letter)
+        return true
+    elseif mods.shift then
+        -- Shift + Meta + Letter => Add (verbose-gated)
+        AddToSelection(letter)
+        return true
+    elseif mods.ctrl then
+        -- Ctrl + Meta + Letter => Filter (verbose-gated)
+        FilterSelection(letter)
+        return true
+    else
+        -- Meta + Letter => Select (verbose-gated)
+        SelectLetterGroup(letter)
+        return true
+    end
+end
+
+function widget:KeyRelease(key)
+    if key == backspaceKey then
+        backspaceDown = false
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Save/Load
+--------------------------------------------------------------------------------
+function widget:GetConfigData()
+    local saved = {
+        enableAutoGroups       = options[IDX_ENABLE]  and options[IDX_ENABLE].value  or true,
+        verboseSelectionToasts = options[IDX_VERBOSE] and options[IDX_VERBOSE].value or false,
+    }
+    for letter, defSet in pairs(assignedGroups) do
+        saved[letter] = {}
+        for defName in pairs(defSet) do
+            saved[letter][#saved[letter]+1] = defName
+        end
+    end
+    return saved
+end
+
+function widget:SetConfigData(data)
+    if type(data) == "table" then
+        if options[IDX_ENABLE]  then options[IDX_ENABLE].value  = (data.enableAutoGroups ~= false) end
+        if options[IDX_VERBOSE] then options[IDX_VERBOSE].value = (data.verboseSelectionToasts == true) end
+
+        assignedGroups = {}
+        for letter, defList in pairs(data) do
+            if type(defList) == "table" then
+                local set = {}
+                for _, defName in ipairs(defList) do
+                    set[defName] = true
+                end
+                assignedGroups[letter] = set
+            end
+        end
+
+        Spring.Echo("[LetterUnitTypeGroups] Loaded saved groups") -- debug-only
+    end
+end

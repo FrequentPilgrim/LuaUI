@@ -1,0 +1,43 @@
+--------------------------------------------------------------------------------
+-- gui_starting_audio.lua — play when the “Starting” countdown begins
+-- Requires a gadget calling: Script.LuaUI.PreGameTimekeeping(secondsUntilStart)
+--------------------------------------------------------------------------------
+
+function widget:GetInfo()
+  return {
+    name    = "Starting Audio",
+    desc    = "Plays audio at the moment the 'Starting' sequence begins",
+    author  = "you",
+    layer   = 0,
+    enabled = true,
+  }
+end
+
+-- === YOUR AUDIO ===
+local CLIP_PATH = "LuaUI/Sounds/battle_begins_in_3_2_1.ogg"  -- your file
+local VOLUME    = 1.0
+
+local fired = false
+
+local function play()
+  if fired then return end
+  if not VFS.FileExists(CLIP_PATH) then
+    Spring.Echo("[StartingAudio] Missing clip: " .. CLIP_PATH)
+    fired = true
+    return
+  end
+  Spring.PlaySoundStream(CLIP_PATH, VOLUME)
+  fired = true
+end
+
+-- Gadget calls this every second before start.
+-- Fire exactly when the “Starting” sequence begins (3 → 2 → 1 → 0).
+function PreGameTimekeeping(secondsUntilStart)
+  if not fired and secondsUntilStart == 3 then
+    play()
+  end
+end
+
+function widget:Shutdown()
+  Spring.StopSoundStream()
+end

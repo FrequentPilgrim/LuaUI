@@ -1,0 +1,94 @@
+function widget:GetInfo()
+  return {
+    name    = "DBG Sniff Morph Finish",
+    desc    = "Logs the exact unsynced signal(s) and text that fire when a commander morph completes.",
+    author  = "you",
+    date    = "2025-08-16",
+    license = "GPL v2",
+    layer   = 100000,
+    enabled = true,
+  }
+end
+
+local spGetMyTeamID      = Spring.GetMyTeamID
+local spGetUnitTeam      = Spring.GetUnitTeam
+local spGetUnitDefID     = Spring.GetUnitDefID
+local spGetAllUnits      = Spring.GetAllUnits
+local spGetGameFrame     = Spring.GetGameFrame
+local spGetUnitRulesParam= Spring.GetUnitRulesParam
+local spValidUnitID      = Spring.ValidUnitID
+
+local UnitDefs = UnitDefs
+
+-- same rough commander check you’re already using
+local function IsCommander(uid, udid)
+  local ud = UnitDefs[udid]; if not ud then return false end
+  local name  = ud.name or ""
+  local isCmd = spGetUnitRulesParam(uid, "iscommander")
+  local comm  = spGetUnitRulesParam(uid, "commtype")
+  local lvl   = spGetUnitRulesParam(uid, "level")
+  if isCmd == 1 then return true end
+  if comm or (lvl and lvl > 0) then return true end
+  if name:find("^dyn") or name:find("^zk_") or name:find("^comm") or name:find("_base") then return true end
+  return false
+end
+
+local myTeam
+local comms = {}  -- unitID -> true
+
+local function reindex()
+  myTeam = spGetMyTeamID()
+  comms = {}
+  for _,u in ipairs(spGetAllUnits()) do
+    if spGetUnitTeam(u) == myTeam then
+      local ud = spGetUnitDefID(u)
+      if ud and IsCommander(u,ud) then comms[u] = true end
+    end
+  end
+  Spring.Echo("game_message: [MorphSniff] Ready; tracking "..tostring(next(comms) and "some" or "no").." commanders.")
+end
+
+function widget:Initialize() reindex() end
+function widget:PlayerChanged() reindex() end
+
+-- 1) **This is the big one**: anything gadgets broadcast via SendToUnsynced(...)
+function widget:RecvFromSynced(tag, ...)
+  -- Only print things that look morph-related to avoid spam
+  local low = tostring(tag):lower()
+  if low:find("morph") or low:find("upgrade") then
+    local parts = { ... }
+    for i=1,#parts do parts[i] = tostring(parts[i]) end
+    Spring.Echo(("game_message: [MorphSniff] RecvFromSynced tag=%s args=[%s] gf=%d")
+      :format(tostring(tag), table.concat(parts, ","), spGetGameFrame()))
+  end
+end
+
+-- 2) Many banners are plain GameMessage lines (printed via Spring.Echo)
+function widget:GameMessage(msg)
+  if type(msg) == "string" and msg:lower():find("morph complete") then
+    Spring.Echo(("game_message: [MorphSniff] GameMessage='%s' gf=%d"):format(msg, spGetGameFrame()))
+  end
+end
+
+-- 3) Track our commanders to correlate with the event stream
+function widget:UnitCreated(uid, udid, team)
+  if team ~= myTeam then return end
+  if IsCommander(uid, udid) then
+    comms[uid] = true
+    Spring.Echo(("game_message: [MorphSniff] Commander CREATED uid=%d gf=%d"):format(uid, spGetGameFrame()))
+  end
+end
+function widget:UnitFinished(uid, udid, team)
+  if team ~= myTeam then return end
+  if IsCommander(uid, udid) then
+    comms[uid] = true
+    Spring.Echo(("game_message: [MorphSniff] Commander FINISHED uid=%d gf=%d"):format(uid, spGetGameFrame()))
+  end
+end
+function widget:UnitDestroyed(uid, udid, team)
+  if team ~= myTeam then return end
+  if comms[uid] then
+    comms[uid] = nil
+    Spring.Echo(("game_message: [MorphSniff] Commander DESTROYED uid=%d gf=%d"):format(uid, spGetGameFrame()))
+  end
+end
