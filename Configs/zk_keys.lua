@@ -238,5 +238,7 @@ return {
 		{"epic_air_rearm_filter_(icon_truth)_selectallrearmneeded", "A+c"},
 		{"epic_air_rearm_filter_runnow", "C+c"},
 		{"epic_air_rearm_filter_selectallrearmneeded", "A+c"},
+		{"epic_letter_group_icons_(filtered_letters_+_f6/f7_toggle)_drawscreen", "A+f7"},
+		{"epic_unit_start_state_veharty_fire_towards_enemy", "None"},
 	},
 }

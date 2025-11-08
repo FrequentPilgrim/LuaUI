@@ -912,5 +912,13 @@ return {
 			[1] = "epic_air_rearm_filter_selectallrearmneeded",
 			[2] = "A+c",
 		},
+		[222] = {
+			[1] = "epic_letter_group_icons_(filtered_letters_+_f6/f7_toggle)_drawscreen",
+			[2] = "A+f7",
+		},
+		[223] = {
+			[1] = "epic_unit_start_state_veharty_fire_towards_enemy",
+			[2] = "None",
+		},
 	},
 }

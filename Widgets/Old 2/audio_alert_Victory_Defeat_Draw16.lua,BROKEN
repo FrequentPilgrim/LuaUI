@@ -1,0 +1,151 @@
+function widget:GetInfo()
+  return {
+    name    = "Victory, Defeat and Draw Audio Alert (Clean Queue Final)",
+    desc    = "Ensures the final outcome line plays last, after current audio, with strict allyTeam check",
+    author  = "FrequentPilgrim (clean queue final fix by GPT-5)",
+    date    = "2025-09-14",
+    license = "GNU GPL v2",
+    enabled = true,
+    layer   = 0,
+  }
+end
+
+----------------------------------------
+-- Debug toggle
+----------------------------------------
+local debugMessages = false  -- set true if you want to see console messages
+
+----------------------------------------
+-- Epic Menu Option
+----------------------------------------
+options = options or {
+  enableAlerts = {
+    name  = "Victory/Defeat/Draw Alerts",
+    desc  = "Play end-of-match sounds (victory/defeat/draw).",
+    type  = "bool",
+    value = true,
+    path  = "Settings/Audio/Audio Alerts",
+  },
+}
+
+function widget:GetConfigData()
+  return {
+    enableAlerts = options and options.enableAlerts and options.enableAlerts.value or true,
+  }
+end
+
+function widget:SetConfigData(data)
+  if data and data.enableAlerts ~= nil and options and options.enableAlerts then
+    options.enableAlerts.value = data.enableAlerts
+  end
+end
+
+----------------------------------------
+-- Config
+----------------------------------------
+local victorySound = "LuaUI/Sounds/congratulations_commander.ogg"
+local defeatSound  = "LuaUI/Sounds/we_have_been_annihilated.ogg"
+local drawSound    = "LuaUI/Sounds/it_is_a_draw.ogg"
+local volume       = 3.0
+
+----------------------------------------
+-- State
+----------------------------------------
+local played = false
+local wasEverPlayer = false
+
+local function updateEverPlayer()
+  local myID = Spring.GetMyPlayerID()
+  if myID then
+    local _, _, isSpec = Spring.GetPlayerInfo(myID)
+    if not isSpec then wasEverPlayer = true end
+  end
+end
+
+----------------------------------------
+-- Helpers
+----------------------------------------
+local function EnqueueFinalOutcome(path, label)
+  if WG and WG.VoiceBus then
+    -- Clear queued sounds but let current playhead finish
+    if WG.VoiceBus.clear then WG.VoiceBus.clear() end
+    -- Lock so no new alerts enter
+    if WG.VoiceBus then
+      if not WG.VoiceBus._locked then
+        WG.VoiceBus._locked = true
+        WG.VoiceBus._origPlay = WG.VoiceBus.play
+        WG.VoiceBus.play = function() return false end
+      end
+    end
+    -- Enqueue the outcome line behind the current playhead
+    if WG.VoiceBus._origPlay then
+      WG.VoiceBus._origPlay(path, { volume = volume, channel = "ui", priority = 999999 })
+    else
+      Spring.PlaySoundFile(path, volume, nil, nil, nil, nil, nil, nil, "ui")
+    end
+    if debugMessages then
+      Spring.Echo("game_message: "..label.." (final outcome queued)")
+    end
+  else
+    -- Fallback direct playback
+    Spring.PlaySoundFile(path, volume, nil, nil, nil, nil, nil, nil, "ui")
+    if debugMessages then
+      Spring.Echo("game_message: "..label.." (final outcome direct)")
+    end
+  end
+end
+
+----------------------------------------
+-- Engine Hooks
+----------------------------------------
+function widget:Initialize()
+  updateEverPlayer()
+end
+
+function widget:PlayerChanged(playerID)
+  if playerID == Spring.GetMyPlayerID() then
+    updateEverPlayer()
+  end
+end
+
+function widget:GameOver(winningAllyTeams)
+  if played then return end
+  played = true
+
+  if not (options and options.enableAlerts and options.enableAlerts.value) then return end
+  if Spring.IsReplay() or not wasEverPlayer then return end
+
+  local myAllyTeamID = Spring.GetMyAllyTeamID()
+  if debugMessages then
+    Spring.Echo("GameOver Debug: myAllyTeamID="..tostring(myAllyTeamID)
+      .." winners="..Spring.Utilities.TableToString(winningAllyTeams))
+  end
+
+  -- Outcome selection
+  if winningAllyTeams == nil then
+    -- Resign shortcut → always defeat
+    EnqueueFinalOutcome(defeatSound, "Defeat (resign)")
+    return
+  end
+
+  if #winningAllyTeams == 0 then
+    -- True draw
+    EnqueueFinalOutcome(drawSound, "Draw")
+    return
+  end
+
+  -- Strict allyTeam membership check
+  local amWinner = false
+  for _, allyTeamID in ipairs(winningAllyTeams) do
+    if allyTeamID == myAllyTeamID then
+      amWinner = true
+      break
+    end
+  end
+
+  if amWinner then
+    EnqueueFinalOutcome(victorySound, "Victory")
+  else
+    EnqueueFinalOutcome(defeatSound, "Defeat")
+  end
+end
