@@ -920,5 +920,9 @@ return {
 			[1] = "epic_unit_start_state_veharty_fire_towards_enemy",
 			[2] = "None",
 		},
+		[224] = {
+			[1] = "epic_letter_group_icons_enabled",
+			[2] = "f7",
+		},
 	},
 }
