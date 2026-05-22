@@ -11,7 +11,7 @@ function widget:GetInfo()
 		desc      = "Plays a fanfare once at GameStart.",
 		author    = "FrequentPilgrim",
 		date      = "2025-08-18",
-		license   = "GNU GPL v2 or later",
+		license   = "MIT",
 		layer     = 0,
 		enabled   = true,
 	}
