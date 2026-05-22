@@ -4,7 +4,7 @@ function widget:GetInfo()
     desc      = "Prunes rearm-needed aircraft from selection; can also select all rearm-needed aircraft.",
     author    = "FrequentPilgim",
     date      = "2025-08-29",
-    license   = "GPLv2+",
+    license   = "MIT",
     version   = "1.0",
     layer     = 0,
     enabled   = true,
