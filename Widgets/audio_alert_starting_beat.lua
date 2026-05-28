@@ -21,15 +21,13 @@ end
 -- Epic Menu (Settings/Audio/Audio Alerts)
 --------------------------------------------------------------------------------
 
-options_path  = "Settings/Audio/Audio Alerts"
-options_order = { "enableStartFanfare" }
-
 options = {
-	enableStartFanfare = {
+	starting_beat = {
 		name  = "Match Start Fanfare",
-		desc  = "Play 'starting_beat.ogg' when the match begins (GameStart).",
+		desc  = "Play 'starting_beat.ogg' when the match begins.",
 		type  = "bool",
 		value = true,
+		path  = "Settings/Audio/Audio Alerts",
 	},
 }
 
@@ -43,6 +41,19 @@ local FANFARE_PATH   = "LuaUI/Sounds/starting_beat.ogg"
 local FANFARE_VOLUME = 1.0  -- Adjust if desired
 local fired          = false
 
+-- Gating (easy one-line reversal; default = do not play in these modes)
+local RUN_IN_REPLAY    = false
+local RUN_IN_SPECTATOR = false
+local RUN_IN_CAMPAIGN  = false
+
+local function play_ok()
+  if Spring.IsReplay() and not RUN_IN_REPLAY then return false end
+  if Spring.GetSpectatingState() and not RUN_IN_SPECTATOR then return false end
+  local mo = Spring.GetModOptions() or {}
+  if mo.singleplayercampaignbattleid and not RUN_IN_CAMPAIGN then return false end
+  return true
+end
+
 --------------------------------------------------------------------------------
 -- Core
 --------------------------------------------------------------------------------
@@ -50,7 +61,8 @@ local fired          = false
 -- Called once when the actual game begins (after pregame countdown).
 function widget:GameStart()
 	if fired then return end
-	if options.enableStartFanfare and options.enableStartFanfare.value then
+	if options.starting_beat and options.starting_beat.value then
+		if not play_ok() then return end
 		fired = true
 		spPlaySoundFile(FANFARE_PATH, FANFARE_VOLUME, "ui")
 	end
@@ -62,12 +74,12 @@ end
 
 function widget:GetConfigData()
 	return {
-		enableStartFanfare = options.enableStartFanfare and options.enableStartFanfare.value or true,
+		starting_beat = options.starting_beat and options.starting_beat.value or true,
 	}
 end
 
 function widget:SetConfigData(data)
-	if data.enableStartFanfare ~= nil and options.enableStartFanfare then
-		options.enableStartFanfare.value = (data.enableStartFanfare == true)
+	if data.starting_beat ~= nil and options.starting_beat then
+		options.starting_beat.value = (data.starting_beat == true)
 	end
 end
