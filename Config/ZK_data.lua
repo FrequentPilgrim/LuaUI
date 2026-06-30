@@ -371,9 +371,9 @@ return {
 		showAdvanced = true,
 		show_crudemenu = true,
 		simpleSettingsMode = false,
-		sub_pos_x = 706.66864,
-		sub_pos_y = 163,
-		subwindow_height = 1207,
+		sub_pos_x = 1387.33521,
+		sub_pos_y = 143,
+		subwindow_height = 454,
 		versionmin = 51,
 		config = {
 			["epic_Air_Rearm_Filter_(Icon_Truth)_verbose"] = true,
@@ -473,6 +473,10 @@ return {
 			["epic_Letter_Group_Icons_(Filtered_Letters_+_F6/F7_Toggle)_fontSizeScreen"] = 20,
 			["epic_Letter_Group_Icons_(Filtered_Letters_+_F6/F7_Toggle)_fontSizeWorld"] = 25,
 			epic_Letter_Group_Icons_enabled = true,
+			epic_Letter_Group_Icons_letter_A = true,
+			epic_Letter_Group_Icons_letter_B = false,
+			epic_Letter_Group_Icons_letter_D = true,
+			epic_Letter_Group_Icons_letter_M = false,
 			epic_Letter_UnitType_Auto_Groups_enableAutoGroups = true,
 			epic_Letter_UnitType_Multi_Auto_Groups_1 = true,
 			epic_Letter_UnitType_Multi_Auto_Groups_2 = true,
@@ -1161,7 +1165,7 @@ return {
 	},
 	["Music Player v2"] = {
 		currentGameAlbum = {
-			gameID = "81c9436a4773f50c5791317122b11963",
+			gameID = "ced7436aca3169b18e3f3ec2000ecc64",
 			trackListName = "denny",
 		},
 	},

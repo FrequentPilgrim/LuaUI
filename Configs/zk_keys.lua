@@ -243,6 +243,6 @@ return {
 		{"epic_letter_group_icons_enabled", "f7"},
 		{"epic_metal_capacity_reached_audio_alert_metal_capacity_reached", "f9"},
 		{"epic_audio_alert_-_energy_reserves_are_low_energy_reserves_are_low", "None"},
-		{"HideInterface", "None"},
+		{"epic_letter_group_icons_letter_a", "None"},
 	},
 }
