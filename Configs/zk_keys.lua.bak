@@ -924,5 +924,13 @@ return {
 			[1] = "epic_letter_group_icons_enabled",
 			[2] = "f7",
 		},
+		[225] = {
+			[1] = "epic_metal_capacity_reached_audio_alert_metal_capacity_reached",
+			[2] = "f9",
+		},
+		[226] = {
+			[1] = "epic_audio_alert_-_energy_reserves_are_low_energy_reserves_are_low",
+			[2] = "None",
+		},
 	},
 }

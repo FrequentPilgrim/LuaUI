@@ -241,5 +241,8 @@ return {
 		{"epic_letter_group_icons_(filtered_letters_+_f6/f7_toggle)_drawscreen", "A+f7"},
 		{"epic_unit_start_state_veharty_fire_towards_enemy", "None"},
 		{"epic_letter_group_icons_enabled", "f7"},
+		{"epic_metal_capacity_reached_audio_alert_metal_capacity_reached", "f9"},
+		{"epic_audio_alert_-_energy_reserves_are_low_energy_reserves_are_low", "None"},
+		{"HideInterface", "None"},
 	},
 }
